@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react'
 import {
   Modal, Tabs, Button, Input, List, Switch, Popconfirm,
-  Space, Tag, message, Divider, Empty, Tooltip
+  Space, Tag, message, Divider, Empty, Tooltip, Spin
 } from 'antd'
 import {
   PlusOutlined, EditOutlined, DeleteOutlined,
-  CheckOutlined, CloseOutlined, LockOutlined, ImportOutlined, PictureOutlined
+  CheckOutlined, CloseOutlined, LockOutlined, ImportOutlined, PictureOutlined,
+  FolderOpenOutlined, GithubOutlined, FileTextOutlined, ReloadOutlined
 } from '@ant-design/icons'
 import type { AttributeType, AttributeValue, IccProfile } from '../../types'
 import { useStore } from '../../store'
@@ -30,6 +31,18 @@ export default function SettingsModal({ open, onClose, onAttrChange }: SettingsM
   const [profiles, setProfiles] = useState<IccProfile[]>([])
   const { setIccProfiles, mergeFilmIconCache } = useStore()
 
+  // storage tab
+  const [libraryRoot, setLibraryRoot] = useState('')
+  const [savingRoot, setSavingRoot] = useState(false)
+
+  // about tab
+  const [appVersion, setAppVersion] = useState('')
+
+  // log tab
+  const [logContent, setLogContent] = useState('')
+  const [logPath, setLogPath] = useState('')
+  const [logLoading, setLogLoading] = useState(false)
+
   const load = async () => {
     const types = await window.api.attrs.listTypes() as AttributeType[]
     setAttrTypes(types)
@@ -45,8 +58,32 @@ export default function SettingsModal({ open, onClose, onAttrChange }: SettingsM
     setIccProfiles(p)
   }
 
+  const loadStorageInfo = async () => {
+    const root = await window.api.app.getLibraryRoot() as string
+    setLibraryRoot(root)
+  }
+
+  const loadAboutInfo = async () => {
+    const ver = await window.api.app.getVersion() as string
+    setAppVersion(ver)
+  }
+
+  const loadLog = async () => {
+    setLogLoading(true)
+    try {
+      const [content, p] = await Promise.all([
+        window.api.app.getLogContent(300) as Promise<string>,
+        window.api.app.getLogPath() as Promise<string>
+      ])
+      setLogContent(content)
+      setLogPath(p)
+    } finally {
+      setLogLoading(false)
+    }
+  }
+
   useEffect(() => {
-    if (open) { load(); loadProfiles() }
+    if (open) { load(); loadProfiles(); loadStorageInfo(); loadAboutInfo() }
   }, [open])
 
   useEffect(() => {
@@ -127,6 +164,22 @@ export default function SettingsModal({ open, onClose, onAttrChange }: SettingsM
     }
   }
 
+  const handlePickLibraryRoot = async () => {
+    const picked = await window.api.app.pickLibraryRoot() as string | null
+    if (picked) setLibraryRoot(picked)
+  }
+
+  const handleSaveLibraryRoot = async () => {
+    if (!libraryRoot.trim()) return
+    setSavingRoot(true)
+    try {
+      await window.api.app.setLibraryRoot(libraryRoot.trim())
+      message.success('存储路径已保存，重启应用后生效')
+    } finally {
+      setSavingRoot(false)
+    }
+  }
+
   const selectedType = attrTypes.find((t) => t.id === selectedTypeId)
   const isFilmType = selectedType?.key === 'film'
 
@@ -136,7 +189,7 @@ export default function SettingsModal({ open, onClose, onAttrChange }: SettingsM
       open={open}
       onCancel={onClose}
       footer={null}
-      width={680}
+      width={720}
       mask={false}
       draggable
       styles={{
@@ -368,6 +421,155 @@ export default function SettingsModal({ open, onClose, onAttrChange }: SettingsM
                   )}
                   style={{ background: '#1e1e1e', borderRadius: 6 }}
                 />
+              </div>
+            )
+          },
+          {
+            key: 'storage',
+            label: '存储',
+            children: (
+              <div style={{ paddingTop: 8 }}>
+                <div style={{ color: '#888', fontSize: 12, marginBottom: 16 }}>
+                  图片文件与数据库存放位置。修改后需重启应用生效，<span style={{ color: '#c8832a' }}>原有文件不会自动迁移</span>，请手动复制。
+                </div>
+                <div style={{ color: '#aaa', fontSize: 12, marginBottom: 6 }}>当前存储目录</div>
+                <Space.Compact style={{ width: '100%', marginBottom: 12 }}>
+                  <Input
+                    value={libraryRoot}
+                    onChange={(e) => setLibraryRoot(e.target.value)}
+                    style={{ background: '#222', borderColor: '#333', color: '#ccc', flex: 1 }}
+                    placeholder="存储目录路径..."
+                  />
+                  <Button
+                    icon={<FolderOpenOutlined />}
+                    onClick={handlePickLibraryRoot}
+                    style={{ background: '#1e1e1e', borderColor: '#333', color: '#aaa' }}
+                  >
+                    浏览
+                  </Button>
+                  <Button
+                    type="primary"
+                    loading={savingRoot}
+                    onClick={handleSaveLibraryRoot}
+                    style={{ background: '#c8832a', borderColor: '#c8832a' }}
+                  >
+                    保存
+                  </Button>
+                </Space.Compact>
+                <div style={{ background: '#111', borderRadius: 6, padding: '10px 14px', fontSize: 12 }}>
+                  <div style={{ color: '#666', marginBottom: 4 }}>目录结构说明</div>
+                  <div style={{ color: '#555', lineHeight: 1.8 }}>
+                    <span style={{ color: '#888' }}>{libraryRoot || '<存储目录>'}/</span><br />
+                    <span style={{ marginLeft: 16, color: '#666' }}>files/</span><span style={{ color: '#444', marginLeft: 8 }}>— 图片文件</span><br />
+                    <span style={{ marginLeft: 16, color: '#666' }}>thumbs/</span><span style={{ color: '#444', marginLeft: 8 }}>— 缩略图缓存</span><br />
+                    <span style={{ marginLeft: 16, color: '#666' }}>film.db</span><span style={{ color: '#444', marginLeft: 8 }}>— 数据库</span>
+                  </div>
+                </div>
+              </div>
+            )
+          },
+          {
+            key: 'about',
+            label: '关于',
+            children: (
+              <div style={{ paddingTop: 16 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24 }}>
+                  <div style={{ width: 64, height: 64, background: '#1e1e1e', borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #2a2a2a', flexShrink: 0 }}>
+                    <span style={{ fontSize: 32 }}>🎞</span>
+                  </div>
+                  <div>
+                    <div style={{ color: '#e0e0e0', fontSize: 18, fontWeight: 600 }}>FilmManager</div>
+                    <div style={{ color: '#666', fontSize: 12, marginTop: 3 }}>面向胶片摄影爱好者的本地管理工具</div>
+                    <div style={{ color: '#c8832a', fontSize: 12, marginTop: 4 }}>v{appVersion}</div>
+                  </div>
+                </div>
+                <Divider style={{ borderColor: '#252525', margin: '0 0 16px 0' }} />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ color: '#888', fontSize: 13 }}>GitHub 仓库</span>
+                    <Button
+                      icon={<GithubOutlined />}
+                      size="small"
+                      onClick={() => window.api.app.openExternal('https://github.com/bolelaile/FilmManager')}
+                      style={{ background: '#1e1e1e', borderColor: '#333', color: '#aaa' }}
+                    >
+                      bolelaile/FilmManager
+                    </Button>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ color: '#888', fontSize: 13 }}>Releases</span>
+                    <Button
+                      size="small"
+                      onClick={() => window.api.app.openExternal('https://github.com/bolelaile/FilmManager/releases')}
+                      style={{ background: '#1e1e1e', borderColor: '#333', color: '#aaa' }}
+                    >
+                      查看所有版本
+                    </Button>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ color: '#888', fontSize: 13 }}>提交 Issue</span>
+                    <Button
+                      size="small"
+                      onClick={() => window.api.app.openExternal('https://github.com/bolelaile/FilmManager/issues')}
+                      style={{ background: '#1e1e1e', borderColor: '#333', color: '#aaa' }}
+                    >
+                      反馈问题
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )
+          },
+          {
+            key: 'log',
+            label: '日志',
+            children: (
+              <div style={{ paddingTop: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <span style={{ color: '#666', fontSize: 11 }}>{logPath || '...'}</span>
+                  <Space size={6}>
+                    <Button
+                      size="small"
+                      icon={<ReloadOutlined />}
+                      loading={logLoading}
+                      onClick={loadLog}
+                      style={{ background: '#1e1e1e', borderColor: '#333', color: '#aaa' }}
+                    >
+                      刷新
+                    </Button>
+                    <Button
+                      size="small"
+                      icon={<FolderOpenOutlined />}
+                      onClick={() => window.api.app.revealLog()}
+                      style={{ background: '#1e1e1e', borderColor: '#333', color: '#aaa' }}
+                    >
+                      打开目录
+                    </Button>
+                  </Space>
+                </div>
+                {logLoading ? (
+                  <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
+                ) : (
+                  <pre
+                    style={{
+                      background: '#0d0d0d',
+                      border: '1px solid #222',
+                      borderRadius: 6,
+                      padding: '10px 12px',
+                      fontSize: 11,
+                      color: '#777',
+                      fontFamily: 'Consolas, monospace',
+                      maxHeight: 340,
+                      overflowY: 'auto',
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-all',
+                      margin: 0,
+                      lineHeight: 1.6
+                    }}
+                  >
+                    {logContent || <span style={{ color: '#444' }}>暂无日志内容，点击"刷新"加载</span>}
+                  </pre>
+                )}
               </div>
             )
           }

@@ -75,7 +75,13 @@ const api = {
   app: {
     setLibraryRoot: (root: string) => ipcRenderer.invoke('app:setLibraryRoot', root),
     getLibraryRoot: () => ipcRenderer.invoke('app:getLibraryRoot'),
-    getInitError: () => ipcRenderer.invoke('app:getInitError')
+    pickLibraryRoot: () => ipcRenderer.invoke('app:pickLibraryRoot'),
+    getInitError: () => ipcRenderer.invoke('app:getInitError'),
+    getVersion: () => ipcRenderer.invoke('app:getVersion'),
+    getLogContent: (maxLines?: number) => ipcRenderer.invoke('app:getLogContent', maxLines),
+    getLogPath: () => ipcRenderer.invoke('app:getLogPath'),
+    revealLog: () => ipcRenderer.invoke('app:revealLog'),
+    openExternal: (url: string) => ipcRenderer.invoke('app:openExternal', url)
   },
   // 窗口控制
   win: {

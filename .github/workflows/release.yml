@@ -29,11 +29,11 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Install dependencies and rebuild native modules
-        run: npm ci --legacy-peer-deps
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps --ignore-scripts
 
       - name: Build installer
-        run: npm run dist
+        run: npm run dist:cross
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2

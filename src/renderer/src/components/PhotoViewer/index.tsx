@@ -371,8 +371,10 @@ export default function PhotoViewer({ attrTypes, onAttrChanged }: PhotoViewerPro
       footer={null}
       width="calc(100vw - 48px)"
       style={{ top: 20, padding: 0 }}
+      mask={false}
+      draggable
       styles={{
-        content: { background: '#111', padding: 0, border: '1px solid #1f1f1f', borderRadius: 8, overflow: 'hidden' },
+        content: { background: '#111', padding: 0, border: '1px solid #353535', borderRadius: 8, overflow: 'hidden', boxShadow: '0 8px 40px rgba(0,0,0,0.85)' },
         header: { background: '#111', borderBottom: '1px solid #1f1f1f', padding: '0 52px 0 16px', margin: 0, height: 52, display: 'flex', alignItems: 'center' },
         body: { padding: 0, height: 'calc(100vh - 130px)', display: 'flex', overflow: 'hidden' }
       }}

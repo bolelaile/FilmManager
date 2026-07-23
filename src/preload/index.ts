@@ -19,6 +19,8 @@ const api = {
   import: {
     selectAndImport: (subLibId?: number) => ipcRenderer.invoke('import:selectAndImport', subLibId),
     importPaths: (paths: string[], subLibId?: number) => ipcRenderer.invoke('import:importPaths', paths, subLibId),
+    scanFolders: () => ipcRenderer.invoke('import:scanFolders'),
+    importRolls: (configs: unknown[]) => ipcRenderer.invoke('import:importRolls', configs),
     onProgress: (cb: (data: { imported: number; skipped: number; total?: number }) => void) => {
       ipcRenderer.on('import:progress', (_, data) => cb(data))
       return () => ipcRenderer.removeAllListeners('import:progress')
@@ -90,6 +92,18 @@ const api = {
     removeFromPhoto: (photoId: number, locationId: number) => ipcRenderer.invoke('locations:removeFromPhoto', photoId, locationId),
     search: (query: string) => ipcRenderer.invoke('locations:search', query),
     mapData: () => ipcRenderer.invoke('locations:mapData')
+  },
+  // 卷管理
+  rolls: {
+    list: (subLibraryId?: number) => ipcRenderer.invoke('rolls:list', subLibraryId),
+    create: (params: { photoIds: number[]; name?: string; subLibraryId?: number | null }) => ipcRenderer.invoke('rolls:create', params),
+    rename: (id: number, name: string) => ipcRenderer.invoke('rolls:rename', id, name),
+    delete: (id: number) => ipcRenderer.invoke('rolls:delete', id),
+    photos: (rollId: number, params: unknown) => ipcRenderer.invoke('rolls:photos', rollId, params),
+    forPhoto: (photoId: number) => ipcRenderer.invoke('rolls:forPhoto', photoId),
+    removePhotos: (rollId: number, photoIds: number[]) => ipcRenderer.invoke('rolls:removePhotos', rollId, photoIds),
+    addPhotos: (rollId: number, photoIds: number[]) => ipcRenderer.invoke('rolls:addPhotos', rollId, photoIds),
+    setCover: (rollId: number, photoId: number) => ipcRenderer.invoke('rolls:setCover', rollId, photoId)
   }
 }
 

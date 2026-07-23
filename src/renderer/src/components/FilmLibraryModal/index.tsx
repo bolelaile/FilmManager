@@ -129,8 +129,10 @@ export default function FilmLibraryModal({ open, attrTypes, onClose, onChanged }
           </Button>
         }
         width={560}
+        mask={false}
+        draggable
         styles={{
-          content: { background: '#1a1a1a', border: '1px solid #252525' },
+          content: { background: '#1a1a1a', border: '1px solid #353535', boxShadow: '0 8px 40px rgba(0,0,0,0.85)' },
           header: { background: '#1a1a1a', borderBottom: '1px solid #252525' },
           footer: { background: '#1a1a1a', borderTop: '1px solid #252525' },
           body: { padding: '12px 16px', maxHeight: 460, overflowY: 'auto' }
@@ -197,8 +199,10 @@ export default function FilmLibraryModal({ open, attrTypes, onClose, onChanged }
         cancelText="取消"
         okButtonProps={{ loading: saving, disabled: !newName.trim() || !newSpec, style: { background: '#c8832a', borderColor: '#c8832a' } }}
         width={420}
+        mask={false}
+        draggable
         styles={{
-          content: { background: '#1a1a1a', border: '1px solid #252525' },
+          content: { background: '#1a1a1a', border: '1px solid #353535', boxShadow: '0 8px 40px rgba(0,0,0,0.85)' },
           header: { background: '#1a1a1a', borderBottom: '1px solid #252525' },
           footer: { background: '#1a1a1a', borderTop: '1px solid #252525' }
         }}

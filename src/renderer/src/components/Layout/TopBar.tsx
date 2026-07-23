@@ -13,7 +13,10 @@ import {
   EditOutlined,
   MinusOutlined,
   BorderOutlined,
-  CloseOutlined
+  CloseOutlined,
+  BlockOutlined,
+  AppstoreOutlined,
+  RollbackOutlined
 } from '@ant-design/icons'
 import { useStore } from '../../store'
 
@@ -28,14 +31,16 @@ interface TopBarProps {
   onOpenFilmLibrary: () => void
   onOpenCameraLibrary: () => void
   onOpenLensLibrary: () => void
+  onCreateRoll: () => void
   totalCount: number
 }
 
 export default function TopBar({
   onImport, onBatchDelete, onBatchEdit, onCreateSubLib,
-  onOpenMap, onOpenFilmLibrary, onOpenCameraLibrary, onOpenLensLibrary, totalCount
+  onOpenMap, onOpenFilmLibrary, onOpenCameraLibrary, onOpenLensLibrary,
+  onCreateRoll, totalCount
 }: TopBarProps) {
-  const { filter, setFilter, thumbnailSize, setThumbnailSize, selectedIds, setSettingsOpen } = useStore()
+  const { filter, setFilter, thumbnailSize, setThumbnailSize, selectedIds, setSettingsOpen, viewMode, setViewMode, activeRoll, setActiveRoll } = useStore()
 
   const handleSearchChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -125,6 +130,17 @@ export default function TopBar({
           style={{ width: 190, background: '#262626', borderColor: '#333', color: '#fff' }}
         />
 
+        {/* 卷内视图返回按钮 */}
+        {viewMode === 'photos' && activeRoll && (
+          <Tooltip title="返回卷视图">
+            <Button
+              icon={<RollbackOutlined />}
+              onClick={() => setActiveRoll(null)}
+              style={{ background: '#1f1f1f', borderColor: '#c8832a', color: '#c8832a' }}
+            />
+          </Tooltip>
+        )}
+
         {selectedIds.size > 0 && (
           <>
             <Badge count={selectedIds.size} size="small">
@@ -144,8 +160,31 @@ export default function TopBar({
                 style={{ background: '#1f1f1f', borderColor: '#333', color: '#c8832a' }}
               />
             </Tooltip>
+            {viewMode !== 'rolls' && (
+              <Tooltip title="建立胶卷卷">
+                <Button
+                  icon={<BlockOutlined />}
+                  onClick={onCreateRoll}
+                  style={{ background: '#1f1f1f', borderColor: '#c8832a', color: '#c8832a' }}
+                />
+              </Tooltip>
+            )}
           </>
         )}
+
+        {/* 视图模式切换：卷 / 单张 */}
+        <Segmented
+          options={[
+            { value: 'rolls', label: <Tooltip title="卷视图"><BlockOutlined /></Tooltip> },
+            { value: 'photos', label: <Tooltip title="照片视图"><AppstoreOutlined /></Tooltip> }
+          ]}
+          value={viewMode}
+          onChange={(v) => {
+            setViewMode(v as 'rolls' | 'photos')
+            if (v === 'rolls') setActiveRoll(null)
+          }}
+          style={{ background: '#262626' }}
+        />
 
         <Tooltip title="新建子库">
           <Button icon={<FolderAddOutlined />} onClick={onCreateSubLib} style={{ background: '#1f1f1f', borderColor: '#333', color: '#ccc' }} />

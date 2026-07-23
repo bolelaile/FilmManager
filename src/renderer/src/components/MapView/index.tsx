@@ -202,8 +202,10 @@ export default function MapView({ open, onClose }: MapViewProps) {
       footer={null}
       width="90vw"
       style={{ top: 20, maxWidth: 1200 }}
+      mask={false}
+      draggable
       styles={{
-        content: { background: '#141414', border: '1px solid #252525', padding: 0 },
+        content: { background: '#141414', border: '1px solid #353535', boxShadow: '0 8px 40px rgba(0,0,0,0.85)', padding: 0 },
         body: { padding: 0 }
       }}
       closeIcon={<CloseOutlined style={{ color: '#888' }} />}

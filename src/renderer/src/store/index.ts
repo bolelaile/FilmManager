@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { AttributeType, FilterState, Photo, SubLibrary, IccProfile } from '../types'
+import type { AttributeType, FilterState, Photo, SubLibrary, IccProfile, Roll } from '../types'
 
 interface AppStore {
   // 属性数据
@@ -29,6 +29,14 @@ interface AppStore {
   // 查看模式
   thumbnailSize: 'small' | 'medium' | 'large'
   setThumbnailSize: (s: 'small' | 'medium' | 'large') => void
+
+  // 视图模式：卷视图 or 单张照片视图
+  viewMode: 'rolls' | 'photos'
+  setViewMode: (m: 'rolls' | 'photos') => void
+
+  // 当前打开的卷（用于卷内照片视图）
+  activeRoll: Roll | null
+  setActiveRoll: (r: Roll | null) => void
 
   // 全屏预览
   viewerPhoto: Photo | null
@@ -89,6 +97,12 @@ export const useStore = create<AppStore>((set) => ({
 
   thumbnailSize: 'medium',
   setThumbnailSize: (s) => set({ thumbnailSize: s }),
+
+  viewMode: 'photos',
+  setViewMode: (m) => set({ viewMode: m }),
+
+  activeRoll: null,
+  setActiveRoll: (r) => set({ activeRoll: r }),
 
   viewerPhoto: null,
   setViewerPhoto: (p) => set({ viewerPhoto: p }),

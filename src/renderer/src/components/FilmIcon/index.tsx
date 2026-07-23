@@ -174,8 +174,10 @@ export function FilmIconPicker({
       onCancel={onClose}
       footer={null}
       width={680}
+      mask={false}
+      draggable
       styles={{
-        content: { background: '#1a1a1a', border: '1px solid #2a2a2a', padding: 0 },
+        content: { background: '#1a1a1a', border: '1px solid #353535', boxShadow: '0 8px 40px rgba(0,0,0,0.85)', padding: 0 },
         header: { background: '#1a1a1a', borderBottom: '1px solid #252525', padding: '14px 20px' },
         body: { padding: '12px 16px 16px' }
       }}

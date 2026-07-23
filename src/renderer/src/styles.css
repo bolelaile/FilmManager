@@ -1,0 +1,61 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+body {
+  background: #141414;
+  color: #e0e0e0;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+/* 自定义滚动条 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #444;
+}
+
+/* Ant Design 暗色覆盖 */
+.ant-drawer-body { padding: 0 !important; }
+.ant-tree .ant-tree-node-content-wrapper:hover { background: rgba(255,255,255,0.04) !important; }
+.ant-collapse-header { padding: 8px 12px !important; }
+.ant-collapse-content-box { padding: 4px 12px 12px !important; }
+.ant-select-dropdown { background: #222 !important; border: 1px solid #333 !important; }
+.ant-select-item-option-active { background: #2a1a08 !important; }
+.ant-select-item-option-selected { background: #2a1a08 !important; }
+.ant-modal-content { padding: 0 !important; overflow: hidden; }
+.ant-modal-header { padding: 14px 20px !important; }
+.ant-modal-body { padding: 16px 20px 20px !important; }
+.ant-segmented-item-selected { background: #c8832a !important; color: #fff !important; }
+
+/* 图片网格项悬停效果 */
+.photo-card:hover > div:first-child {
+  border-color: rgba(200, 131, 42, 0.5) !important;
+}
+
+/* 地点搜索结果悬停 */
+.location-result-item:hover { background: #222 !important; }
+
+/* Leaflet 地图暗色修正 */
+.leaflet-container { background: #1a1a1a !important; font-family: inherit; }
+.leaflet-control-attribution { background: rgba(20,20,20,0.8) !important; color: #555 !important; }
+.leaflet-control-attribution a { color: #666 !important; }
+.leaflet-bar a { background: #222 !important; color: #ccc !important; border-color: #333 !important; }
+.leaflet-bar a:hover { background: #2a2a2a !important; }

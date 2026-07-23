@@ -1,0 +1,20 @@
+# 依赖
+node_modules/
+
+# 构建输出
+out/
+dist-electron/
+
+# 日志
+*.log
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 本地数据库与缓存
+*.db
+thumbs/
+
+# 编译产物
+*.js.map

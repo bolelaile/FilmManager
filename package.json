@@ -1,0 +1,140 @@
+{
+  "name": "film-manager",
+  "version": "1.1.1",
+  "description": "胶片扫描文件管理应用",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "rebuild": "electron-rebuild -f -w better-sqlite3 -w sharp",
+    "postinstall": "electron-rebuild -f -w better-sqlite3 -w sharp",
+    "dist": "npm run build && electron-builder --win --x64",
+    "dist:dir": "npm run build && electron-builder --win --x64 --dir",
+    "dist:cross": "node scripts/prepare-win-natives.mjs && npm run build && electron-builder --win --x64"
+  },
+  "dependencies": {
+    "@tanstack/react-virtual": "^3.2.0",
+    "@types/leaflet": "^1.9.21",
+    "antd": "^5.14.0",
+    "better-sqlite3": "^9.4.3",
+    "dayjs": "^1.11.10",
+    "electron-log": "^5.1.2",
+    "leaflet": "^1.9.4",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-leaflet": "^5.0.0",
+    "sharp": "^0.33.3",
+    "zustand": "^4.5.1"
+  },
+  "devDependencies": {
+    "@electron-toolkit/preload": "^3.0.0",
+    "@electron-toolkit/utils": "^3.0.0",
+    "@electron/rebuild": "^3.6.0",
+    "@types/better-sqlite3": "^7.6.8",
+    "@types/node": "^20.11.16",
+    "@types/react": "^18.2.55",
+    "@types/react-dom": "^18.2.19",
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.17",
+    "electron": "^29.1.0",
+    "electron-builder": "^24.9.4",
+    "electron-vite": "^2.0.0",
+    "postcss": "^8.4.35",
+    "tailwindcss": "^3.4.1",
+    "typescript": "^5.3.3",
+    "vite": "^5.1.1"
+  },
+  "build": {
+    "appId": "com.filmmanager.app",
+    "productName": "FilmManager",
+    "copyright": "Copyright © 2025 FilmManager",
+    "npmRebuild": false,
+    "nodeGypRebuild": false,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "resources/icon.ico",
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "FilmManager",
+      "installerIcon": "resources/icon.ico",
+      "uninstallerIcon": "resources/icon.ico",
+      "installerHeaderIcon": "resources/icon.ico",
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": false,
+      "unicode": true
+    },
+    "files": [
+      "out/**/*",
+      "resources/**/*",
+      "node_modules/**/*",
+      "package.json",
+      "!node_modules/@img/sharp-linux-x64/**",
+      "!node_modules/@img/sharp-libvips-linux-x64/**",
+      "!node_modules/@img/sharp-linuxmusl-x64/**",
+      "!node_modules/@img/sharp-libvips-linuxmusl-x64/**",
+      "!node_modules/@img/sharp-linux-arm/**",
+      "!node_modules/@img/sharp-linux-arm64/**",
+      "!node_modules/@img/sharp-linux-s390x/**",
+      "!node_modules/@img/sharp-libvips-linux-arm/**",
+      "!node_modules/@img/sharp-libvips-linux-arm64/**",
+      "!node_modules/@img/sharp-libvips-linux-s390x/**",
+      "!node_modules/@img/sharp-darwin-x64/**",
+      "!node_modules/@img/sharp-darwin-arm64/**",
+      "!node_modules/@img/sharp-libvips-darwin-x64/**",
+      "!node_modules/@img/sharp-libvips-darwin-arm64/**",
+      "!node_modules/@img/sharp-wasm32/**",
+      "!node_modules/.cache/**",
+      "!node_modules/.bin/**",
+      "!**/node_modules/electron/**",
+      "!**/node_modules/electron-builder/**",
+      "!**/node_modules/electron-vite/**",
+      "!**/node_modules/@electron/rebuild/**",
+      "!**/node_modules/typescript/**",
+      "!**/node_modules/vite/**",
+      "!**/node_modules/@vitejs/**",
+      "!**/node_modules/rollup/**",
+      "!**/node_modules/esbuild/**",
+      "!**/node_modules/tailwindcss/**",
+      "!**/node_modules/postcss/**",
+      "!**/node_modules/autoprefixer/**",
+      "!**/*.md",
+      "!**/*.ts",
+      "!**/*.map",
+      "!**/test/**",
+      "!**/tests/**",
+      "!**/spec/**",
+      "!**/.git/**"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/profiles",
+        "to": "profiles"
+      },
+      {
+        "from": "resources/film-icons",
+        "to": "film-icons"
+      }
+    ],
+    "asarUnpack": [
+      "node_modules/better-sqlite3/**",
+      "node_modules/sharp/**",
+      "node_modules/@img/**"
+    ],
+    "directories": {
+      "output": "dist-electron"
+    }
+  }
+}

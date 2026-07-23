@@ -32,8 +32,14 @@ jobs:
       - name: Install dependencies
         run: npm ci --legacy-peer-deps --ignore-scripts
 
-      - name: Build installer
-        run: npm run dist:cross
+      - name: Prepare Windows native modules
+        run: node scripts/prepare-win-natives.mjs
+
+      - name: Build application
+        run: npm run build
+
+      - name: Package installer
+        run: npx electron-builder --win --x64 --publish never
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2

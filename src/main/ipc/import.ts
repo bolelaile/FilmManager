@@ -20,6 +20,15 @@ interface AttrMatch {
   value: string
   key: string
   iconKey?: string | null
+  matchedAlias: string | null  // null = matched by primary name; non-null = alias that triggered match
+}
+
+interface AliasRow {
+  alias: string
+  value_id: number
+  attribute_type_id: number
+  icon_key?: string | null
+  type_key: string
 }
 
 export interface FolderScanResult {
@@ -50,33 +59,61 @@ function normalize(s: string): string {
   return s.replace(/[\s\-_.]/g, '').toLowerCase()
 }
 
-/** Fuzzy-match a folder name against attribute values. Returns best match per type. */
+/** Fuzzy-match a folder name against attribute values and aliases. Returns best match per type. */
 function matchFolderName(
   folderName: string,
-  allValues: { id: number; attribute_type_id: number; value: string; key: string; icon_key?: string | null }[]
+  allValues: { id: number; attribute_type_id: number; value: string; key: string; icon_key?: string | null }[],
+  aliases: AliasRow[] = []
 ): AttrMatch[] {
   const norm = normalize(folderName)
   const matched: AttrMatch[] = []
   const seenTypes = new Set<number>()
 
+  // ── Pass 1: primary value matching ────────────────────────────────────────
   // Prefer longer matches (more specific)
   const sorted = [...allValues].sort((a, b) => b.value.length - a.value.length)
 
   for (const v of sorted) {
     if (seenTypes.has(v.attribute_type_id)) continue
     const normVal = normalize(v.value)
-    if (normVal.length < 2) continue // skip trivially short values
+    if (normVal.length < 2) continue
     if (norm.includes(normVal) || normVal.includes(norm)) {
       matched.push({
         typeId: v.attribute_type_id,
         valueId: v.id,
         value: v.value,
         key: v.key,
-        iconKey: v.icon_key ?? null
+        iconKey: v.icon_key ?? null,
+        matchedAlias: null
       })
       seenTypes.add(v.attribute_type_id)
     }
   }
+
+  // ── Pass 2: alias matching (fills gaps not covered by primary) ────────────
+  // Sort aliases by length descending for specificity
+  const sortedAliases = [...aliases].sort((a, b) => b.alias.length - a.alias.length)
+
+  for (const a of sortedAliases) {
+    if (seenTypes.has(a.attribute_type_id)) continue
+    const normAlias = normalize(a.alias)
+    if (normAlias.length < 2) continue
+    if (norm.includes(normAlias) || normAlias.includes(norm)) {
+      // Find the primary value record to get its value string and key
+      const primaryVal = allValues.find((v) => v.id === a.value_id)
+      if (!primaryVal) continue
+      matched.push({
+        typeId: a.attribute_type_id,
+        valueId: a.value_id,
+        value: primaryVal.value,
+        key: a.type_key,
+        iconKey: a.icon_key ?? null,
+        matchedAlias: a.alias  // preserve original (un-normalized) alias for display
+      })
+      seenTypes.add(a.attribute_type_id)
+    }
+  }
+
   return matched
 }
 
@@ -213,6 +250,16 @@ export function registerImportIpc(): void {
       ORDER BY LENGTH(av.value) DESC
     `).all(...matchableKeys) as { id: number; attribute_type_id: number; value: string; key: string; icon_key?: string | null }[]
 
+    // Load aliases for all matchable values
+    const allAliases = db.prepare(`
+      SELECT ava.alias, ava.value_id, av.attribute_type_id, av.icon_key, at.key as type_key
+      FROM attribute_value_aliases ava
+      JOIN attribute_values av ON av.id = ava.value_id
+      JOIN attribute_types at ON at.id = av.attribute_type_id
+      WHERE at.key IN (${matchableKeys.map(() => '?').join(',')})
+      ORDER BY LENGTH(ava.alias) DESC
+    `).all(...matchableKeys) as AliasRow[]
+
     // Enumerate immediate subdirectories
     let entries: fs.Dirent[]
     try {
@@ -222,10 +269,8 @@ export function registerImportIpc(): void {
     }
 
     // ── Determine parent-folder role ──────────────────────────────────────
-    // Match the root folder name itself against attribute values to see if it
-    // represents a camera or film type — this is used to fill in gaps in child matches.
     const rootName = path.basename(rootPath)
-    const rootMatches = matchFolderName(rootName, allValues)
+    const rootMatches = matchFolderName(rootName, allValues, allAliases)
 
     const folders: FolderScanResult[] = []
 
@@ -235,8 +280,8 @@ export function registerImportIpc(): void {
       const files = walkDirect(folderPath)
       if (files.length === 0) continue
 
-      // Match child folder name
-      const childMatches = matchFolderName(entry.name, allValues)
+      // Match child folder name (primary + alias)
+      const childMatches = matchFolderName(entry.name, allValues, allAliases)
 
       // Parse date from child name (fallback to root name)
       const parsedDate = parseDateFromName(entry.name) ?? parseDateFromName(rootName)

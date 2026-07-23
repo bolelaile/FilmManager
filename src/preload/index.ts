@@ -47,7 +47,11 @@ const api = {
     filmIconsBatch: (keys: string[], size?: 64 | 128) => ipcRenderer.invoke('attrs:filmIconsBatch', keys, size),
     importCustomIcon: () => ipcRenderer.invoke('attrs:importCustomIcon'),
     deleteValue: (id: number) => ipcRenderer.invoke('attrs:deleteValue', id),
-    reorder: (ids: number[]) => ipcRenderer.invoke('attrs:reorder', ids)
+    reorder: (ids: number[]) => ipcRenderer.invoke('attrs:reorder', ids),
+    listAliases: (valueId: number) => ipcRenderer.invoke('attrs:listAliases', valueId),
+    addAlias: (valueId: number, alias: string) => ipcRenderer.invoke('attrs:addAlias', valueId, alias),
+    removeAlias: (aliasId: number) => ipcRenderer.invoke('attrs:removeAlias', aliasId),
+    importJson: (typeId: number) => ipcRenderer.invoke('attrs:importJson', typeId)
   },
   // 子库
   sublib: {

@@ -174,6 +174,105 @@ export function registerAttributesIpc(): void {
     tx()
     return true
   })
+
+  // ── 别名管理 ─────────────────────────────────────────────────────────────
+
+  // 获取某属性值的所有别名
+  ipcMain.handle('attrs:listAliases', (_, valueId: number) => {
+    return getDb()
+      .prepare('SELECT id, alias FROM attribute_value_aliases WHERE value_id = ? ORDER BY created_at ASC')
+      .all(valueId) as { id: number; alias: string }[]
+  })
+
+  // 新增别名
+  ipcMain.handle('attrs:addAlias', (_, valueId: number, alias: string) => {
+    const trimmed = alias.trim()
+    if (!trimmed) return null
+    const r = getDb()
+      .prepare('INSERT OR IGNORE INTO attribute_value_aliases (value_id, alias) VALUES (?, ?)')
+      .run(valueId, trimmed)
+    return r.changes > 0 ? r.lastInsertRowid : null
+  })
+
+  // 删除别名
+  ipcMain.handle('attrs:removeAlias', (_, aliasId: number) => {
+    getDb().prepare('DELETE FROM attribute_value_aliases WHERE id = ?').run(aliasId)
+    return true
+  })
+
+  // JSON 批量导入属性值（含别名）
+  ipcMain.handle('attrs:importJson', async (event, typeId: number) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    const result = await dialog.showOpenDialog(win!, {
+      properties: ['openFile'],
+      filters: [{ name: 'JSON 文件', extensions: ['json'] }],
+      title: '选择要导入的 JSON 文件'
+    })
+    if (result.canceled || !result.filePaths[0]) return null
+
+    let entries: { value: string; aliases?: string[]; icon_key?: string }[]
+    try {
+      const raw = fs.readFileSync(result.filePaths[0], 'utf-8')
+      const parsed = JSON.parse(raw)
+      if (!Array.isArray(parsed)) return { error: '文件内容不是数组' }
+      entries = parsed
+    } catch (e) {
+      return { error: 'JSON 解析失败：' + String(e) }
+    }
+
+    const db = getDb()
+    let added = 0
+    let updated = 0
+    let aliasesAdded = 0
+
+    const tx = db.transaction(() => {
+      const insertVal = db.prepare(
+        'INSERT OR IGNORE INTO attribute_values (attribute_type_id, value, icon_key, is_preset) VALUES (?, ?, ?, 0)'
+      )
+      const getVal = db.prepare(
+        'SELECT id FROM attribute_values WHERE attribute_type_id = ? AND value = ?'
+      )
+      const updateIcon = db.prepare(
+        'UPDATE attribute_values SET icon_key = ? WHERE id = ?'
+      )
+      const insertAlias = db.prepare(
+        'INSERT OR IGNORE INTO attribute_value_aliases (value_id, alias) VALUES (?, ?)'
+      )
+
+      for (const entry of entries) {
+        if (!entry.value || typeof entry.value !== 'string') continue
+        const val = entry.value.trim()
+        if (!val) continue
+
+        const r = insertVal.run(typeId, val, entry.icon_key ?? null)
+        let valueId: number
+        if (r.changes > 0) {
+          valueId = r.lastInsertRowid as number
+          added++
+        } else {
+          const existing = getVal.get(typeId, val) as { id: number } | undefined
+          if (!existing) continue
+          valueId = existing.id
+          // Merge-update icon_key if provided
+          if (entry.icon_key) {
+            updateIcon.run(entry.icon_key, valueId)
+          }
+          updated++
+        }
+
+        for (const alias of entry.aliases ?? []) {
+          if (typeof alias !== 'string') continue
+          const a = alias.trim()
+          if (!a) continue
+          const ar = insertAlias.run(valueId, a)
+          if (ar.changes > 0) aliasesAdded++
+        }
+      }
+    })
+    tx()
+
+    return { added, updated, aliasesAdded }
+  })
 }
 
 interface AttrType { id: number; key: string; display_name: string; is_system: number; is_active: number; sort_order: number }

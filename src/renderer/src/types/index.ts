@@ -74,6 +74,7 @@ export interface FolderAttrMatch {
   value: string
   key: string
   iconKey?: string | null
+  matchedAlias: string | null  // null = matched by primary name; non-null = matched via this alias
 }
 
 export interface RollImportConfig {

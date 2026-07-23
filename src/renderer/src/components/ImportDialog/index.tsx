@@ -37,6 +37,7 @@ interface RowConfig {
   folder: FolderScanResult
   rollName: string
   attrs: Record<number, number | null> // typeId -> valueId
+  matchedAliases: Record<number, string | null> // typeId -> alias that triggered match (null = primary name)
   locationId: number | null
   shotDate: string | null
   createRoll: boolean
@@ -208,14 +209,17 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
         ]
 
         const attrMap: Record<number, number | null> = {}
+        const aliasMap: Record<number, string | null> = {}
         for (const m of merged) {
           attrMap[m.typeId] = m.valueId
+          aliasMap[m.typeId] = m.matchedAlias ?? null
         }
 
         return {
           folder,
           rollName: folder.inferredRollName || folder.name,
           attrs: attrMap,
+          matchedAliases: aliasMap,
           locationId: null,
           shotDate: folder.parsedDate,
           createRoll: true
@@ -606,7 +610,10 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
           selectedValueId={filmTypeId ? (rowConfigs[filmPickerRowIdx]?.attrs[filmTypeId] ?? null) : null}
           onSelect={(id) => {
             if (filmTypeId) {
-              updateRow(filmPickerRowIdx, { attrs: { ...rowConfigs[filmPickerRowIdx].attrs, [filmTypeId]: id } })
+              updateRow(filmPickerRowIdx, {
+                attrs: { ...rowConfigs[filmPickerRowIdx].attrs, [filmTypeId]: id },
+                matchedAliases: { ...rowConfigs[filmPickerRowIdx].matchedAliases, [filmTypeId]: null }
+              })
             }
             setFilmPickerRowIdx(null)
           }}
@@ -614,7 +621,10 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
             setFilmValues((prev) => [...prev, val])
             if (filmTypeId) {
               setTypeValues((prev) => ({ ...prev, [filmTypeId]: [...(prev[filmTypeId] ?? []), val] }))
-              updateRow(filmPickerRowIdx, { attrs: { ...rowConfigs[filmPickerRowIdx].attrs, [filmTypeId]: val.id } })
+              updateRow(filmPickerRowIdx, {
+                attrs: { ...rowConfigs[filmPickerRowIdx].attrs, [filmTypeId]: val.id },
+                matchedAliases: { ...rowConfigs[filmPickerRowIdx].matchedAliases, [filmTypeId]: null }
+              })
             }
             setFilmPickerRowIdx(null)
           }}
@@ -668,6 +678,16 @@ function RollConfirmRow({
     if (childTypeIds.has(typeId)) return 'child'
     if (parentTypeIds.has(typeId)) return 'parent'
     return 'none'
+  }
+
+  const aliasLabel = (typeId: number) => {
+    const alias = rc.matchedAliases?.[typeId]
+    if (!alias) return null
+    return (
+      <Tooltip title={`匹配别名："${alias}"`}>
+        <span style={{ fontSize: 9, color: '#c8832a', background: 'rgba(200,131,42,0.15)', border: '1px solid rgba(200,131,42,0.4)', borderRadius: 3, padding: '1px 4px', marginLeft: 3, cursor: 'default' }}>~别名</span>
+      </Tooltip>
+    )
   }
 
   const sourceLabel = (typeId: number) => {
@@ -739,6 +759,7 @@ function RollConfirmRow({
             {selectedFilm ? (
               <>
                 <FilmTag value={selectedFilm.value} iconKey={selectedFilm.icon_key} iconSize={16} style={{ color: '#ccc', fontSize: 11 }} />
+                {filmTypeId && aliasLabel(filmTypeId)}
                 {filmTypeId && sourceLabel(filmTypeId)}
               </>
             ) : (
@@ -759,14 +780,21 @@ function RollConfirmRow({
                 style={{ minWidth: 100 }}
                 placeholder={type.display_name}
                 value={selectedId ?? undefined}
-                onChange={(v) => onUpdate({ attrs: { ...rc.attrs, [type.id]: v ?? null } })}
+                onChange={(v) => onUpdate({
+                  attrs: { ...rc.attrs, [type.id]: v ?? null },
+                  matchedAliases: { ...rc.matchedAliases, [type.id]: null }
+                })}
                 allowClear
-                onClear={() => onUpdate({ attrs: { ...rc.attrs, [type.id]: null } })}
+                onClear={() => onUpdate({
+                  attrs: { ...rc.attrs, [type.id]: null },
+                  matchedAliases: { ...rc.matchedAliases, [type.id]: null }
+                })}
                 filterOption={(input, option) => normalize(String(option?.label ?? '')).includes(normalize(input))}
                 options={vals.map((v) => ({ value: v.id, label: v.value }))}
                 styles={{ popup: { root: { background: '#1a1a1a' } } }}
                 popupMatchSelectWidth={false}
               />
+              {aliasLabel(type.id)}
               {sourceLabel(type.id)}
             </div>
           )

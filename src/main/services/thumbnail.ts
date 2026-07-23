@@ -3,6 +3,7 @@ import path from 'path'
 import { createHash } from 'crypto'
 import log from 'electron-log'
 import sharp from 'sharp'
+import exifReader from 'exif-reader'
 
 export const THUMB_SIZE = 400
 export const SUPPORTED_EXTENSIONS = new Set([
@@ -18,6 +19,11 @@ export function isRawFormat(ext: string): boolean {
 
 export function getFileType(filePath: string): string {
   return path.extname(filePath).toLowerCase().replace('.', '')
+}
+
+export function normalizeRotation(rotation: number): 0 | 90 | 180 | 270 {
+  const normalized = ((Math.round(rotation / 90) * 90) % 360 + 360) % 360
+  return normalized as 0 | 90 | 180 | 270
 }
 
 /** 从 RAW 文件中提取嵌入的 JPEG 预览 */
@@ -62,11 +68,14 @@ function extractEmbeddedJpeg(rawBuffer: Buffer): Buffer | null {
 /** 生成缩略图，返回缩略图文件路径 */
 export async function generateThumbnail(
   sourcePath: string,
-  thumbDir: string
+  thumbDir: string,
+  rotation = 0
 ): Promise<string | null> {
   try {
     fs.mkdirSync(thumbDir, { recursive: true })
-    const hash = createHash('md5').update(sourcePath).digest('hex')
+    const normalizedRotation = normalizeRotation(rotation)
+    const hashInput = normalizedRotation === 0 ? sourcePath : `${sourcePath}:rotation:${normalizedRotation}`
+    const hash = createHash('md5').update(hashInput).digest('hex')
     const thumbPath = path.join(thumbDir, `${hash}.webp`)
 
     if (fs.existsSync(thumbPath)) return thumbPath
@@ -77,13 +86,17 @@ export async function generateThumbnail(
       // 尝试 sharp 直接读取（部分 RAW 格式支持）
       let imgBuffer: Buffer | null = null
       try {
-        imgBuffer = await sharp(sourcePath).resize(THUMB_SIZE, THUMB_SIZE, { fit: 'inside' }).webp({ quality: 80 }).toBuffer()
+        let pipeline = sharp(sourcePath)
+        if (normalizedRotation) pipeline = pipeline.rotate(normalizedRotation)
+        imgBuffer = await pipeline.resize(THUMB_SIZE, THUMB_SIZE, { fit: 'inside' }).webp({ quality: 80 }).toBuffer()
       } catch {
         // 回退：提取嵌入 JPEG
         const rawBuf = fs.readFileSync(sourcePath)
         const embedded = extractEmbeddedJpeg(rawBuf)
         if (embedded) {
-          imgBuffer = await sharp(embedded)
+          let pipeline = sharp(embedded)
+          if (normalizedRotation) pipeline = pipeline.rotate(normalizedRotation)
+          imgBuffer = await pipeline
             .resize(THUMB_SIZE, THUMB_SIZE, { fit: 'inside' })
             .webp({ quality: 80 })
             .toBuffer()
@@ -95,7 +108,9 @@ export async function generateThumbnail(
       }
       return null
     } else {
-      await sharp(sourcePath)
+      let pipeline = sharp(sourcePath)
+      if (normalizedRotation) pipeline = pipeline.rotate(normalizedRotation)
+      await pipeline
         .resize(THUMB_SIZE, THUMB_SIZE, { fit: 'inside' })
         .webp({ quality: 80 })
         .toFile(thumbPath)
@@ -129,11 +144,116 @@ export async function getImageMeta(filePath: string): Promise<{ width: number; h
 }
 
 export interface ExifData {
-  shotDate: string | null   // YYYY-MM-DD
+  shotDate: string | null
+  cameraMake: string | null
   cameraModel: string | null
+  lensMake: string | null
+  lensModel: string | null
 }
 
-/** 从 EXIF 提取拍摄日期和相机型号 */
+const MAKER_ALIASES: { pattern: RegExp; name: string }[] = [
+  { pattern: /^(NIKON|NIKON CORPORATION)/i, name: 'Nikon' },
+  { pattern: /^CANON/i, name: 'Canon' },
+  { pattern: /^(FUJIFILM|FUJI PHOTO FILM)/i, name: 'Fujifilm' },
+  { pattern: /^SONY/i, name: 'Sony' },
+  { pattern: /^OM DIGITAL/i, name: 'OM System' },
+  { pattern: /^OLYMPUS/i, name: 'Olympus' },
+  { pattern: /^(PANASONIC|MATSUSHITA)/i, name: 'Panasonic' },
+  { pattern: /^LEICA/i, name: 'Leica' },
+  { pattern: /^PENTAX/i, name: 'Pentax' },
+  { pattern: /^RICOH/i, name: 'Ricoh' },
+  { pattern: /^HASSELBLAD/i, name: 'Hasselblad' },
+  { pattern: /^MAMIYA/i, name: 'Mamiya' },
+  { pattern: /^PHASE ONE/i, name: 'Phase One' },
+  { pattern: /^SIGMA/i, name: 'Sigma' },
+  { pattern: /^TAMRON/i, name: 'Tamron' },
+  { pattern: /^TOKINA/i, name: 'Tokina' },
+  { pattern: /^(CARL ZEISS|ZEISS)/i, name: 'Zeiss' },
+  { pattern: /^APPLE/i, name: 'Apple' },
+  { pattern: /^GOOGLE/i, name: 'Google' }
+]
+
+function emptyExifData(): ExifData {
+  return { shotDate: null, cameraMake: null, cameraModel: null, lensMake: null, lensModel: null }
+}
+
+function cleanMetadataText(value: unknown): string | null {
+  if (value == null) return null
+  let text: string
+  if (Buffer.isBuffer(value)) {
+    const looksUtf16 = value.length >= 4 && value[1] === 0 && value[3] === 0
+    text = value.toString(looksUtf16 ? 'utf16le' : 'utf8')
+  } else if (typeof value === 'string' || typeof value === 'number') {
+    text = String(value)
+  } else {
+    return null
+  }
+  return text.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim() || null
+}
+
+function standardizeMaker(value: unknown): string | null {
+  const maker = cleanMetadataText(value)
+  if (!maker) return null
+  const alias = MAKER_ALIASES.find(({ pattern }) => pattern.test(maker))
+  if (alias) return alias.name
+  return maker
+    .replace(/\s+(CORPORATION|CORP\.?|COMPANY|CO\.?|LTD\.?|LIMITED)(,?.*)?$/i, '')
+    .trim() || maker
+}
+
+function equipmentKey(value: string): string {
+  return value.normalize('NFKC').toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/g, '')
+}
+
+function formatEquipmentName(makerValue: unknown, modelValue: unknown): string | null {
+  const maker = standardizeMaker(makerValue)
+  const model = cleanMetadataText(modelValue)
+  if (!model) return maker
+  if (!maker) return model
+
+  const makerKey = equipmentKey(maker)
+  const modelKey = equipmentKey(model)
+  if (modelKey.startsWith(makerKey)) {
+    return maker + model.slice(maker.length)
+  }
+  if (modelKey.includes(makerKey)) return model
+  return `${maker} ${model}`
+}
+
+function formatExifDate(value: unknown): string | null {
+  if (!(value instanceof Date) || Number.isNaN(value.getTime())) return null
+  const year = value.getUTCFullYear()
+  if (year <= 1970 || year >= 2100) return null
+  return value.toISOString().slice(0, 10)
+}
+
+export function parseExifBuffer(buffer: Buffer): ExifData {
+  try {
+    const metadata = exifReader(buffer)
+    const image = metadata.Image as Record<string, unknown> | undefined
+    const photo = metadata.Photo as Record<string, unknown> | undefined
+    const cameraMake = standardizeMaker(image?.Make)
+    const lensMake = standardizeMaker(photo?.LensMake)
+    const shotDate = formatExifDate(photo?.DateTimeOriginal)
+      ?? formatExifDate(photo?.DateTimeDigitized)
+      ?? formatExifDate(image?.DateTime)
+    const cameraModel = formatEquipmentName(
+      cameraMake,
+      image?.Model ?? image?.UniqueCameraModel
+    )
+    const lensModel = formatEquipmentName(
+      lensMake,
+      photo?.LensModel ?? image?.LensModel
+    )
+
+    return { shotDate, cameraMake, cameraModel, lensMake, lensModel }
+  } catch (err) {
+    log.debug('EXIF parse failed', err)
+    return emptyExifData()
+  }
+}
+
+/** 从 EXIF 提取拍摄日期、相机和镜头型号 */
 export async function getExifData(filePath: string): Promise<ExifData> {
   try {
     const ext = path.extname(filePath).toLowerCase()
@@ -144,54 +264,28 @@ export async function getExifData(filePath: string): Promise<ExifData> {
       } catch {
         const rawBuf = fs.readFileSync(filePath)
         const embedded = extractEmbeddedJpeg(rawBuf)
-        if (!embedded) return { shotDate: null, cameraModel: null }
+        if (!embedded) return emptyExifData()
         meta = await sharp(embedded).metadata()
+      }
+      if (!meta.exif) {
+        const rawBuf = fs.readFileSync(filePath)
+        const embedded = extractEmbeddedJpeg(rawBuf)
+        if (embedded) meta = await sharp(embedded).metadata()
       }
     } else {
       meta = await sharp(filePath).metadata()
     }
-
-    let shotDate: string | null = null
-    let cameraModel: string | null = null
-
-    if (meta.exif) {
-      try {
-        const exifStr = meta.exif.toString('binary')
-        // Parse DateTimeOriginal (tag 0x9003) — stored as ASCII "YYYY:MM:DD HH:MM:SS"
-        const dateMatch = exifStr.match(/(\d{4}):(\d{2}):(\d{2}) \d{2}:\d{2}:\d{2}/)
-        if (dateMatch) {
-          const year = parseInt(dateMatch[1])
-          if (year > 1970 && year < 2100) {
-            shotDate = `${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}`
-          }
-        }
-        // Parse camera Model tag — find "Model\0" followed by ASCII string
-        const modelMatch = exifStr.match(/Model\0([^\0]{1,64})/)
-        if (modelMatch) {
-          cameraModel = modelMatch[1].replace(/[^\x20-\x7E\u4e00-\u9fff]/g, '').trim() || null
-        }
-        // Also try Make + Model combo for common EXIF layouts
-        if (!cameraModel) {
-          const makeMatch = exifStr.match(/Make\0([^\0]{1,32})/)
-          if (makeMatch) {
-            cameraModel = makeMatch[1].replace(/[^\x20-\x7E\u4e00-\u9fff]/g, '').trim() || null
-          }
-        }
-      } catch {
-        // EXIF parsing is best-effort
-      }
-    }
-
-    return { shotDate, cameraModel }
+    return meta.exif ? parseExifBuffer(meta.exif) : emptyExifData()
   } catch {
-    return { shotDate: null, cameraModel: null }
+    return emptyExifData()
   }
 }
 
 /** 渲染全分辨率预览（用于全屏查看），可选应用 ICC 配置文件 */
 export async function renderFullPreview(
   filePath: string,
-  iccProfilePath?: string
+  iccProfilePath?: string,
+  rotation = 0
 ): Promise<{ buffer: Buffer; width: number; height: number } | null> {
   try {
     const ext = path.extname(filePath).toLowerCase()
@@ -212,6 +306,9 @@ export async function renderFullPreview(
     } else {
       pipeline = sharp(filePath)
     }
+
+    const normalizedRotation = normalizeRotation(rotation)
+    if (normalizedRotation) pipeline = pipeline.rotate(normalizedRotation)
 
     // 应用 ICC 配置文件
     if (iccProfilePath && fs.existsSync(iccProfilePath)) {

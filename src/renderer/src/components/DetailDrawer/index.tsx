@@ -20,9 +20,10 @@ interface DetailDrawerProps {
   attrTypes: AttributeType[]
   onClose: () => void
   onDeleted: () => void
+  onMoved?: () => void
 }
 
-export default function DetailDrawer({ photoId, attrTypes, onClose, onDeleted }: DetailDrawerProps) {
+export default function DetailDrawer({ photoId, attrTypes, onClose, onDeleted, onMoved }: DetailDrawerProps) {
   const [photo, setPhoto] = useState<Photo | null>(null)
   const [notes, setNotes] = useState('')
   const [editingNotes, setEditingNotes] = useState(false)
@@ -93,6 +94,7 @@ export default function DetailDrawer({ photoId, attrTypes, onClose, onDeleted }:
     if (!photo) return
     await window.api.photos.moveToSubLibrary([photo.id], subLibId)
     load()
+    onMoved?.()
   }
 
   const flattenSubLibs = (libs: typeof subLibraries, depth = 0): { id: number; name: string; depth: number }[] =>

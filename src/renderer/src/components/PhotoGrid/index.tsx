@@ -116,10 +116,10 @@ export default function PhotoGrid({
     if (!contextMenu) return
     const onClick = () => setContextMenu(null)
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setContextMenu(null) }
-    window.addEventListener('click', onClick, true)
+    window.addEventListener('click', onClick)
     window.addEventListener('keydown', onKey)
     return () => {
-      window.removeEventListener('click', onClick, true)
+      window.removeEventListener('click', onClick)
       window.removeEventListener('keydown', onKey)
     }
   }, [contextMenu])
@@ -313,6 +313,7 @@ export default function PhotoGrid({
             zIndex: 2000, overflow: 'hidden', minWidth: 188, padding: '4px 0'
           }}
           onClick={(e) => e.stopPropagation()}
+          onContextMenu={(e) => { e.preventDefault(); e.stopPropagation() }}
         >
           <CtxItem label="在文件管理器中打开" onClick={handleRevealFile} />
           <CtxItem label="复制文件路径" onClick={handleCopyPath} />

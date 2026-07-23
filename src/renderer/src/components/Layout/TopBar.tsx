@@ -13,7 +13,9 @@ import {
   EditOutlined,
   MinusOutlined,
   BorderOutlined,
-  CloseOutlined
+  CloseOutlined,
+  RotateRightOutlined,
+  FolderOutlined
 } from '@ant-design/icons'
 import { useStore } from '../../store'
 
@@ -23,6 +25,8 @@ interface TopBarProps {
   onImport: () => void
   onBatchDelete: () => void
   onBatchEdit: () => void
+  onBatchRotate: () => void
+  onMoveToSubLibrary: () => void
   onCreateSubLib: () => void
   onOpenMap: () => void
   onOpenFilmLibrary: () => void
@@ -32,7 +36,7 @@ interface TopBarProps {
 }
 
 export default function TopBar({
-  onImport, onBatchDelete, onBatchEdit, onCreateSubLib,
+  onImport, onBatchDelete, onBatchEdit, onBatchRotate, onMoveToSubLibrary, onCreateSubLib,
   onOpenMap, onOpenFilmLibrary, onOpenCameraLibrary, onOpenLensLibrary, totalCount
 }: TopBarProps) {
   const { filter, setFilter, thumbnailSize, setThumbnailSize, selectedIds, setSettingsOpen } = useStore()
@@ -142,6 +146,20 @@ export default function TopBar({
                 icon={<EditOutlined />}
                 onClick={onBatchEdit}
                 style={{ background: '#1f1f1f', borderColor: '#333', color: '#c8832a' }}
+              />
+            </Tooltip>
+            <Tooltip title="顺时针旋转 90°">
+              <Button
+                icon={<RotateRightOutlined />}
+                onClick={onBatchRotate}
+                style={{ background: '#1f1f1f', borderColor: '#333', color: '#c8832a' }}
+              />
+            </Tooltip>
+            <Tooltip title="移动到子库">
+              <Button
+                icon={<FolderOutlined />}
+                onClick={onMoveToSubLibrary}
+                style={{ background: '#1f1f1f', borderColor: '#333', color: '#ccc' }}
               />
             </Tooltip>
           </>

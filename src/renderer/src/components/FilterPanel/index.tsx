@@ -1,16 +1,21 @@
 import React, { useState } from 'react'
-import { Tree, Collapse, Checkbox, DatePicker, Select, Button, Tag, Tooltip, Input } from 'antd'
+import { Tree, Collapse, Checkbox, DatePicker, Select, Button, Tag, Tooltip, Input, Segmented, Modal, message } from 'antd'
 import {
   FolderOutlined,
   FolderOpenOutlined,
   SortAscendingOutlined,
   SortDescendingOutlined,
-  SearchOutlined
+  SearchOutlined,
+  InboxOutlined,
+  CalendarOutlined,
+  CameraOutlined,
+  FileImageOutlined,
+  DeleteOutlined
 } from '@ant-design/icons'
 import type { DataNode } from 'antd/es/tree'
 import dayjs from 'dayjs'
 import { useStore } from '../../store'
-import type { AttributeType, SubLibrary } from '../../types'
+import type { AttributeType, SubLibrary, PhotoFilterOptions, OrganizationStatus } from '../../types'
 import { FilmIconImg } from '../FilmIcon'
 
 const { RangePicker } = DatePicker
@@ -20,12 +25,30 @@ interface FilterPanelProps {
   attrTypes: AttributeType[]
   valueCounts: Record<string, Record<string, number>>
   subLibCounts: Record<string, number>
+  filterOptions: PhotoFilterOptions
+  onSubLibraryDeleted: () => void
 }
 
-export default function FilterPanel({ attrTypes, valueCounts, subLibCounts }: FilterPanelProps) {
+const organizationStatusItems: { value: OrganizationStatus; label: string; icon: React.ReactNode }[] = [
+  { value: 'unclassified', label: '未分类', icon: <InboxOutlined /> },
+  { value: 'missing_date', label: '缺少拍摄日期', icon: <CalendarOutlined /> },
+  { value: 'missing_camera', label: '缺少相机信息', icon: <CameraOutlined /> }
+]
+
+export default function FilterPanel({ attrTypes, valueCounts, subLibCounts, filterOptions, onSubLibraryDeleted }: FilterPanelProps) {
   const { filter, setFilter, subLibraries } = useStore()
   // per-type search query for attribute value filtering
   const [attrSearch, setAttrSearch] = useState<Record<number, string>>({})
+  const [contextMenu, setContextMenu] = useState<{ id: number; name: string; x: number; y: number } | null>(null)
+
+  React.useEffect(() => {
+    if (!contextMenu) return
+    const close = () => setContextMenu(null)
+    window.addEventListener('click', close)
+    return () => {
+      window.removeEventListener('click', close)
+    }
+  }, [contextMenu])
 
   const normalize = (s: string) => s.replace(/\s+/g, '').toLowerCase()
 
@@ -41,7 +64,7 @@ export default function FilterPanel({ attrTypes, valueCounts, subLibCounts }: Fi
   }
 
   const buildTree = (nodes: SubLibrary[]): DataNode[] =>
-    nodes.map((n) => {
+    nodes.map<DataNode>((n) => {
       const count = subLibCounts[String(n.id)] ?? 0
       return {
         key: n.id,
@@ -51,13 +74,31 @@ export default function FilterPanel({ attrTypes, valueCounts, subLibCounts }: Fi
             {count > 0 && <span style={{ color: '#555', fontSize: 11, marginLeft: 6 }}>{count}</span>}
           </span>
         ),
-        icon: ({ expanded }: { expanded: boolean }) =>
+        icon: ({ expanded }: { expanded?: boolean }) =>
           expanded ? <FolderOpenOutlined /> : <FolderOutlined />,
         children: n.children.length ? buildTree(n.children) : undefined
       }
     })
 
-  const activeFilterCount = Object.values(filter.filters).reduce((s, v) => s + v.length, 0)
+  const flattenSubLibraries = (nodes: SubLibrary[], depth = 0): { id: number; name: string; depth: number }[] =>
+    nodes.flatMap((node) => [{ id: node.id, name: node.name, depth }, ...flattenSubLibraries(node.children, depth + 1)])
+
+  const selectedStatuses = filter.organizationStatuses ?? []
+  const selectedFileTypes = filter.fileTypes ?? []
+  const totalPhotoCount = subLibCounts.__total ?? 0
+  const attributeFilterCount = Object.values(filter.filters).reduce((s, v) => s + v.length, 0)
+  const activeFilterCount = attributeFilterCount
+    + selectedStatuses.length
+    + selectedFileTypes.length
+    + (filter.dateFrom || filter.dateTo ? 1 : 0)
+    + (filter.subLibraryId != null ? 1 : 0)
+
+  const toggleOrganizationStatus = (status: OrganizationStatus) => {
+    const next = selectedStatuses.includes(status)
+      ? selectedStatuses.filter((value) => value !== status)
+      : [...selectedStatuses, status]
+    setFilter({ organizationStatuses: next })
+  }
 
   return (
     <div
@@ -85,8 +126,8 @@ export default function FilterPanel({ attrTypes, valueCounts, subLibCounts }: Fi
               title: (
                 <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
                   <span>全部照片</span>
-                  {subLibCounts['null'] !== undefined && subLibCounts['null'] > 0 && (
-                    <span style={{ color: '#555', fontSize: 11, marginLeft: 6 }}>{subLibCounts['null']}</span>
+                  {totalPhotoCount > 0 && (
+                    <span style={{ color: '#555', fontSize: 11, marginLeft: 6 }}>{totalPhotoCount}</span>
                   )}
                 </span>
               ),
@@ -99,15 +140,102 @@ export default function FilterPanel({ attrTypes, valueCounts, subLibCounts }: Fi
             const key = keys[0] as number
             setFilter({ subLibraryId: key === -1 ? undefined : key })
           }}
+          onRightClick={({ event, node }) => {
+            event.preventDefault()
+            const id = Number(node.key)
+            if (id <= 0) return
+            const name = flattenSubLibraries(subLibraries).find((library) => library.id === id)?.name ?? '子库'
+            setContextMenu({
+              id,
+              name,
+              x: Math.min(event.clientX, window.innerWidth - 220),
+              y: Math.min(event.clientY, window.innerHeight - 90)
+            })
+          }}
           style={{ background: 'transparent', color: '#ccc' }}
         />
       </div>
 
-      {/* 入库时间 */}
+      {contextMenu && (
+        <div
+          style={{
+            position: 'fixed',
+            left: contextMenu.x,
+            top: contextMenu.y,
+            zIndex: 3000,
+            minWidth: 190,
+            padding: '4px 0',
+            background: '#1e1e1e',
+            border: '1px solid #333',
+            borderRadius: 6,
+            boxShadow: '0 6px 24px rgba(0,0,0,0.55)'
+          }}
+          onClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => { event.preventDefault(); event.stopPropagation() }}
+        >
+          <div style={{ padding: '6px 14px', color: '#777', fontSize: 11, borderBottom: '1px solid #2a2a2a' }}>
+            {contextMenu.name}
+          </div>
+          <button
+            type="button"
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '8px 14px',
+              border: 0,
+              background: 'transparent',
+              color: '#ff7875',
+              textAlign: 'left',
+              cursor: 'pointer'
+            }}
+            onClick={() => {
+              const target = contextMenu
+              setContextMenu(null)
+              Modal.confirm({
+                title: `删除子库“${target.name}”？`,
+                content: '子库中的照片会移入未分类，子子库会提升为顶层，照片文件不会被删除。',
+                okText: '删除子库',
+                cancelText: '取消',
+                okButtonProps: { danger: true },
+                onOk: async () => {
+                  try {
+                    await window.api.sublib.delete(target.id)
+                    if (filter.subLibraryId === target.id) setFilter({ subLibraryId: undefined })
+                    onSubLibraryDeleted()
+                    message.success(`已删除子库“${target.name}”`)
+                  } catch (error) {
+                    console.error('delete sub-library failed:', error)
+                    message.error('删除子库失败，请检查日志')
+                    throw error
+                  }
+                }
+              })
+            }}
+          >
+            <DeleteOutlined />
+            删除子库
+          </button>
+        </div>
+      )}
+
+      {/* 时间范围 */}
       <div style={{ padding: '10px 12px', borderBottom: '1px solid #252525' }}>
         <div style={{ color: '#888', fontSize: 11, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>
-          入库时间
+          时间范围
         </div>
+        <Segmented
+          block
+          size="small"
+          value={filter.dateField}
+          onChange={(value) => setFilter({ dateField: value as 'imported_at' | 'shot_date' })}
+          options={[
+            { value: 'imported_at', label: '入库日期' },
+            { value: 'shot_date', label: '拍摄日期' }
+          ]}
+          style={{ marginBottom: 8 }}
+        />
         <RangePicker
           size="small"
           style={{ width: '100%', background: '#222', borderColor: '#333' }}
@@ -119,6 +247,59 @@ export default function FilterPanel({ attrTypes, valueCounts, subLibCounts }: Fi
           }
         />
       </div>
+
+      {/* 整理状态 */}
+      <div style={{ padding: '10px 12px', borderBottom: '1px solid #252525' }}>
+        <div style={{ color: '#888', fontSize: 11, marginBottom: 5, textTransform: 'uppercase', letterSpacing: 1 }}>
+          整理状态
+        </div>
+        {organizationStatusItems.map((item) => {
+          const count = filterOptions.statusCounts[item.value] ?? 0
+          return (
+            <div
+              key={item.value}
+              onClick={() => toggleOrganizationStatus(item.value)}
+              style={{
+                minHeight: 28,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                cursor: 'pointer'
+              }}
+            >
+              <span style={{ display: 'flex', alignItems: 'center', gap: 7, color: '#bbb', fontSize: 12 }}>
+                <Checkbox checked={selectedStatuses.includes(item.value)} style={{ pointerEvents: 'none' }} />
+                <span style={{ color: '#666', width: 14 }}>{item.icon}</span>
+                {item.label}
+              </span>
+              <span style={{ color: '#555', fontSize: 11 }}>{count}</span>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* 文件格式 */}
+      {filterOptions.fileTypes.length > 0 && (
+        <div style={{ padding: '10px 12px', borderBottom: '1px solid #252525' }}>
+          <div style={{ color: '#888', fontSize: 11, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>
+            <FileImageOutlined style={{ marginRight: 5 }} />文件格式
+          </div>
+          <Select
+            mode="multiple"
+            allowClear
+            maxTagCount="responsive"
+            size="small"
+            value={selectedFileTypes}
+            onChange={(values) => setFilter({ fileTypes: values })}
+            placeholder="全部格式"
+            style={{ width: '100%' }}
+            options={filterOptions.fileTypes.map((item) => ({
+              value: item.value,
+              label: `${item.value.toUpperCase()} (${item.count})`
+            }))}
+          />
+        </div>
+      )}
 
       {/* 属性筛选 */}
       <Collapse
@@ -217,6 +398,7 @@ export default function FilterPanel({ attrTypes, valueCounts, subLibCounts }: Fi
           style={{ flex: 1 }}
           options={[
             { value: 'imported_at', label: '入库时间' },
+            { value: 'shot_date', label: '拍摄日期' },
             { value: 'file_name', label: '文件名' }
           ]}
         />
@@ -235,7 +417,15 @@ export default function FilterPanel({ attrTypes, valueCounts, subLibCounts }: Fi
         <Button
           size="small"
           type="link"
-          onClick={() => setFilter({ filters: {}, dateFrom: undefined, dateTo: undefined, subLibraryId: undefined })}
+          onClick={() => setFilter({
+            filters: {},
+            dateFrom: undefined,
+            dateTo: undefined,
+            dateField: 'imported_at',
+            fileTypes: [],
+            organizationStatuses: [],
+            subLibraryId: undefined
+          })}
           style={{ margin: '0 12px 8px', color: '#c8832a' }}
         >
           清除所有筛选 ({activeFilterCount})

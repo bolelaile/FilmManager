@@ -58,6 +58,7 @@ interface AppStore {
 
 const defaultFilter: FilterState = {
   filters: {},
+  dateField: 'imported_at',
   sortBy: 'imported_at',
   sortOrder: 'desc'
 }

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { Modal, Button, Progress, Select, Space, Divider, DatePicker } from 'antd'
+import { Modal, Button, Progress, Select, Space, Divider, DatePicker, Switch, Tooltip } from 'antd'
 import {
   FolderOpenOutlined,
   CheckCircleOutlined,
@@ -8,9 +8,11 @@ import {
   PlusOutlined,
   EnvironmentOutlined,
   CloseCircleOutlined,
-  CalendarOutlined
+  CalendarOutlined,
+  ApartmentOutlined,
+  InfoCircleOutlined
 } from '@ant-design/icons'
-import type { SubLibrary, AttributeValue, Location } from '../../types'
+import type { SubLibrary, AttributeValue, Location, AutoOrganizeMode } from '../../types'
 import dayjs from 'dayjs'
 import LocationPicker from '../LocationPicker'
 import { useStore } from '../../store'
@@ -26,6 +28,9 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
   const { subLibraries, setImportProgress, attrTypes } = useStore()
   const [step, setStep] = useState<'select' | 'importing' | 'done'>('select')
   const [subLibId, setSubLibId] = useState<number | undefined>(undefined)
+  const [autoOrganize, setAutoOrganize] = useState(false)
+  const [organizeBy, setOrganizeBy] = useState<AutoOrganizeMode>('year-month')
+  const [autoCreateEquipment, setAutoCreateEquipment] = useState(true)
   const [progress, setProgress] = useState({ total: 0, imported: 0, skipped: 0 })
   // typeId -> selected valueId (null = not set)
   const [selectedAttrs, setSelectedAttrs] = useState<Record<number, number | null>>({})
@@ -58,6 +63,9 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
       setStep('select')
       setProgress({ total: 0, imported: 0, skipped: 0 })
       setSelectedAttrs({})
+      setAutoOrganize(false)
+      setOrganizeBy('year-month')
+      setAutoCreateEquipment(true)
       setImportedIds([])
       setSelectedLocation(null)
       setShotDate(null)
@@ -128,6 +136,7 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
     }
 
     if (result.imported > 0 || result.skipped > 0) {
+      onSuccess()
       setStep('done')
       setProgress((p) => ({ ...p, imported: result.imported, skipped: result.skipped }))
     } else {
@@ -141,11 +150,28 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
     setProgress({ total: 0, imported: 0, skipped: 0 })
     setImportProgress({ total: 0, imported: 0, skipped: 0 })
     setupListeners()
+    const cameraType = attrTypes.find((type) => type.key === 'camera')
+    const lensType = attrTypes.find((type) => type.key === 'lens')
+    const selectedCameraValue = cameraType
+      ? (typeValues[cameraType.id] ?? []).find((value) => value.id === selectedAttrsRef.current[cameraType.id])
+      : undefined
+    const selectedLensValue = lensType
+      ? (typeValues[lensType.id] ?? []).find((value) => value.id === selectedAttrsRef.current[lensType.id])
+      : undefined
+    const options = {
+      subLibraryId: subLibId,
+      organizeBy: (autoOrganize ? organizeBy : 'none') as AutoOrganizeMode,
+      shotDate: shotDateRef.current,
+      filmName: selectedFilmValue?.value ?? null,
+      cameraName: selectedCameraValue?.value ?? null,
+      lensName: selectedLensValue?.value ?? null,
+      autoCreateEquipment
+    }
     if (pendingPaths.length > 0) {
-      const result = await window.api.import.importPaths(pendingPaths, subLibId)
+      const result = await window.api.import.importPaths(pendingPaths, options)
       await applyAttributesAndFinish(result)
     } else {
-      const result = await window.api.import.selectAndImport(subLibId)
+      const result = await window.api.import.selectAndImport(options)
       await applyAttributesAndFinish(result)
     }
   }
@@ -201,6 +227,13 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
   ]
 
   const nonFilmTypes = attrTypes.filter((t) => t.key !== 'film')
+  const organizeHint: Record<Exclude<AutoOrganizeMode, 'none'>, string> = {
+    'year-month': '根据手动日期或 EXIF 拍摄日期创建“年份 / 年月”两级子库。',
+    year: '根据手动日期或 EXIF 拍摄日期创建年份子库。',
+    camera: '根据 EXIF 相机型号创建子库，无法识别时归入“相机未知”。',
+    film: '根据本次选择的胶片创建子库，未选择时归入“胶片未指定”。',
+    'source-folder': '根据每张照片原始所在文件夹创建子库。'
+  }
 
   return (
     <>
@@ -365,6 +398,16 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
               )
             })}
 
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', minHeight: 28 }}>
+              <span style={{ color: '#aaa', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+                自动收录新器材
+                <Tooltip title="EXIF 中识别到的相机或镜头不在器材库时，自动创建对应型号">
+                  <InfoCircleOutlined style={{ color: '#666' }} />
+                </Tooltip>
+              </span>
+              <Switch size="small" checked={autoCreateEquipment} onChange={setAutoCreateEquipment} />
+            </div>
+
             <Divider style={{ borderColor: '#252525', margin: '0' }} />
 
             {/* 拍摄地点（整卷）*/}
@@ -409,19 +452,51 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
                 value={shotDate ? dayjs(shotDate) : null}
                 onChange={(d) => setShotDate(d ? d.format('YYYY-MM-DD') : null)}
                 allowClear
-                placeholder="未设置（默认用入库时间）"
+                placeholder="未设置（优先读取 EXIF）"
               />
             </div>
 
-            {/* 子库选择 */}
+            {/* 整理位置 */}
             <div>
-              <div style={{ color: '#888', fontSize: 12, marginBottom: 6 }}>导入到子库（可选）</div>              <Select
+              <div style={{ color: '#888', fontSize: 12, marginBottom: 6 }}>
+                {autoOrganize ? '整理到根目录（可选）' : '导入到子库（可选）'}
+              </div>
+              <Select
                 style={{ width: '100%' }}
                 value={subLibId}
                 onChange={setSubLibId}
                 options={subLibOptions as never}
                 placeholder="选择子库..."
               />
+            </div>
+
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                <span style={{ color: '#aaa', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <ApartmentOutlined style={{ color: '#c8832a' }} />
+                  自动整理
+                </span>
+                <Switch size="small" checked={autoOrganize} onChange={setAutoOrganize} />
+              </div>
+              {autoOrganize && (
+                <>
+                  <Select
+                    style={{ width: '100%' }}
+                    value={organizeBy}
+                    onChange={(value) => setOrganizeBy(value)}
+                    options={[
+                      { value: 'year-month', label: '按拍摄月份' },
+                      { value: 'year', label: '按拍摄年份' },
+                      { value: 'camera', label: '按相机型号' },
+                      { value: 'film', label: '按胶片类型' },
+                      { value: 'source-folder', label: '按来源文件夹' }
+                    ]}
+                  />
+                  <div style={{ color: '#666', fontSize: 11, lineHeight: 1.5, marginTop: 6 }}>
+                    {organizeHint[organizeBy as Exclude<AutoOrganizeMode, 'none'>]}
+                  </div>
+                </>
+              )}
             </div>
 
             <Button
@@ -466,7 +541,7 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
               <Button onClick={onClose}>关闭</Button>
               <Button
                 type="primary"
-                onClick={() => { onSuccess(); onClose() }}
+                onClick={onClose}
                 style={{ background: '#c8832a', borderColor: '#c8832a' }}
               >
                 查看照片

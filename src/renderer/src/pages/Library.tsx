@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
-import { Layout, message, Modal, Input, Spin } from 'antd'
+import { Layout, message, Modal, Input, Spin, Select } from 'antd'
 import { useStore } from '../store'
-import type { Photo, AttributeType } from '../types'
+import type { Photo, AttributeType, PhotoFilterOptions, SubLibrary } from '../types'
 import TopBar from '../components/Layout/TopBar'
 import FilterPanel from '../components/FilterPanel'
 import PhotoGrid from '../components/PhotoGrid'
@@ -48,7 +48,13 @@ export default function Library() {
   const [cameraLibraryOpen, setCameraLibraryOpen] = useState(false)
   const [lensLibraryOpen, setLensLibraryOpen] = useState(false)
   const [batchEditOpen, setBatchEditOpen] = useState(false)
+  const [moveSubLibOpen, setMoveSubLibOpen] = useState(false)
+  const [moveTargetSubLibId, setMoveTargetSubLibId] = useState<number | null>(null)
   const [subLibCounts, setSubLibCounts] = useState<Record<string, number>>({})
+  const [filterOptions, setFilterOptions] = useState<PhotoFilterOptions>({
+    fileTypes: [],
+    statusCounts: { unclassified: 0, missing_date: 0, missing_camera: 0 }
+  })
   const loadingRef = useRef(false)
 
   const loadAttrs = useCallback(async () => {
@@ -66,10 +72,14 @@ export default function Library() {
   }, [setAttrTypes])
 
   const loadSubLibs = useCallback(async () => {
-    const libs = await window.api.sublib.list()
+    const [libs, counts, options] = await Promise.all([
+      window.api.sublib.list(),
+      window.api.sublib.counts(),
+      window.api.photos.filterOptions()
+    ])
     setSubLibraries(libs)
-    const counts = await window.api.sublib.counts() as Record<string, number>
-    setSubLibCounts(counts)
+    setSubLibCounts(counts as Record<string, number>)
+    setFilterOptions(options as PhotoFilterOptions)
   }, [setSubLibraries])
 
   const loadPhotos = useCallback(async (reset = false) => {
@@ -86,6 +96,9 @@ export default function Library() {
         search: filter.search,
         dateFrom: filter.dateFrom,
         dateTo: filter.dateTo,
+        dateField: filter.dateField,
+        fileTypes: filter.fileTypes,
+        organizationStatuses: filter.organizationStatuses,
         sortBy: filter.sortBy,
         sortOrder: filter.sortOrder
       }) as { total: number; rows: Photo[] }
@@ -142,6 +155,7 @@ export default function Library() {
         clearSelection()
         loadPhotos(true)
         loadAttrs()
+        loadSubLibs()
       }
     })
   }
@@ -154,12 +168,43 @@ export default function Library() {
     loadSubLibs()
   }
 
+  const flattenSubLibs = (libs: SubLibrary[], depth = 0): { id: number; name: string; depth: number }[] =>
+    libs.flatMap((lib) => [{ id: lib.id, name: lib.name, depth }, ...flattenSubLibs(lib.children, depth + 1)])
+
+  const subLibMoveOptions = [
+    { value: null, label: '未分类（根目录）' },
+    ...flattenSubLibs(useStore.getState().subLibraries).map((lib) => ({
+      value: lib.id,
+      label: '　'.repeat(lib.depth) + lib.name
+    }))
+  ]
+
+  const handleBatchRotate = async () => {
+    if (selectedIds.size === 0) return
+    const result = await window.api.photos.batchRotate([...selectedIds], 90) as { updated: number }
+    message.success(`已旋转 ${result.updated} 张照片`)
+    clearSelection()
+    loadPhotos(true)
+  }
+
+  const handleBatchMove = async () => {
+    if (selectedIds.size === 0) return
+    await window.api.photos.moveToSubLibrary([...selectedIds], moveTargetSubLibId)
+    message.success(`已移动 ${selectedIds.size} 张照片`)
+    clearSelection()
+    setMoveSubLibOpen(false)
+    loadPhotos(true)
+    loadSubLibs()
+  }
+
   return (
     <Layout style={{ height: '100vh', background: '#141414', overflow: 'hidden' }}>
       <TopBar
         onImport={() => setImportOpen(true)}
         onBatchDelete={handleBatchDelete}
         onBatchEdit={() => setBatchEditOpen(true)}
+        onBatchRotate={handleBatchRotate}
+        onMoveToSubLibrary={() => { setMoveTargetSubLibId(null); setMoveSubLibOpen(true) }}
         onCreateSubLib={() => setCreateSubLibOpen(true)}
         onOpenMap={() => setMapOpen(true)}
         onOpenFilmLibrary={() => setFilmLibraryOpen(true)}
@@ -173,6 +218,8 @@ export default function Library() {
           attrTypes={attrTypes}
           valueCounts={valueCounts}
           subLibCounts={subLibCounts}
+          filterOptions={filterOptions}
+          onSubLibraryDeleted={() => { loadPhotos(true); loadSubLibs() }}
         />
 
         <Layout.Content style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#141414' }}>
@@ -183,27 +230,28 @@ export default function Library() {
             attrTypes={attrTypes}
             onLoadMore={() => loadPhotos(false)}
             onOpenViewer={handleOpenViewer}
-            onPhotoDeleted={() => { loadPhotos(true); loadAttrs() }}
+            onPhotoDeleted={() => { loadPhotos(true); loadAttrs(); loadSubLibs() }}
           />
         </Layout.Content>
       </Layout>
 
       {/* 全屏预览 */}
-      <PhotoViewer attrTypes={attrTypes} onAttrChanged={() => { loadPhotos(true); loadAttrs() }} />
+      <PhotoViewer attrTypes={attrTypes} onAttrChanged={() => { loadPhotos(true); loadAttrs(); loadSubLibs() }} />
 
       {/* 详情抽屉 */}
       <DetailDrawer
         photoId={detailPhotoId}
         attrTypes={attrTypes}
         onClose={() => setDetailPhotoId(null)}
-        onDeleted={() => { loadPhotos(true); loadAttrs() }}
+        onMoved={() => { loadPhotos(true); loadSubLibs() }}
+        onDeleted={() => { loadPhotos(true); loadAttrs(); loadSubLibs() }}
       />
 
       {/* 导入对话框 */}
       <ImportDialog
         open={importOpen}
         onClose={() => setImportOpen(false)}
-        onSuccess={() => { loadPhotos(true); loadAttrs() }}
+        onSuccess={() => { loadPhotos(true); loadAttrs(); loadSubLibs() }}
       />
 
       {/* 新建子库 */}
@@ -229,6 +277,28 @@ export default function Library() {
         />
       </Modal>
 
+      {/* 批量移动到子库 */}
+      <Modal
+        title={`移动 ${selectedIds.size} 张照片`}
+        open={moveSubLibOpen}
+        onOk={handleBatchMove}
+        onCancel={() => setMoveSubLibOpen(false)}
+        okText="移动"
+        cancelText="取消"
+        styles={{
+          content: { background: '#1a1a1a', border: '1px solid #252525' },
+          header: { background: '#1a1a1a', borderBottom: '1px solid #252525' }
+        }}
+      >
+        <Select
+          style={{ width: '100%' }}
+          value={moveTargetSubLibId}
+          onChange={setMoveTargetSubLibId}
+          options={subLibMoveOptions as never}
+          placeholder="选择目标子库"
+        />
+      </Modal>
+
       {/* 设置 */}
       <SettingsModal
         open={settingsOpen}
@@ -244,7 +314,7 @@ export default function Library() {
         open={filmLibraryOpen}
         attrTypes={attrTypes}
         onClose={() => setFilmLibraryOpen(false)}
-        onChanged={() => { loadAttrs(); loadPhotos(true) }}
+        onChanged={() => { loadAttrs(); loadPhotos(true); loadSubLibs() }}
       />
 
       {/* 相机库 */}
@@ -254,7 +324,7 @@ export default function Library() {
         title="相机库"
         attrTypes={attrTypes}
         onClose={() => setCameraLibraryOpen(false)}
-        onChanged={() => { loadAttrs(); loadPhotos(true) }}
+        onChanged={() => { loadAttrs(); loadPhotos(true); loadSubLibs() }}
       />
 
       {/* 镜头库 */}
@@ -264,7 +334,7 @@ export default function Library() {
         title="镜头库"
         attrTypes={attrTypes}
         onClose={() => setLensLibraryOpen(false)}
-        onChanged={() => { loadAttrs(); loadPhotos(true) }}
+        onChanged={() => { loadAttrs(); loadPhotos(true); loadSubLibs() }}
       />
 
       {/* 批量编辑属性 */}
@@ -273,7 +343,7 @@ export default function Library() {
         selectedIds={[...selectedIds]}
         attrTypes={attrTypes}
         onClose={() => setBatchEditOpen(false)}
-        onDone={() => { setBatchEditOpen(false); clearSelection(); loadPhotos(true); loadAttrs() }}
+        onDone={() => { setBatchEditOpen(false); clearSelection(); loadPhotos(true); loadAttrs(); loadSubLibs() }}
       />
     </Layout>
   )

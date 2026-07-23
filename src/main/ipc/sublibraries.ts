@@ -48,11 +48,31 @@ export function registerSubLibrariesIpc(): void {
 
   // 获取子库下照片数
   ipcMain.handle('sublib:counts', () => {
-    const rows = getDb()
+    const db = getDb()
+    const directRows = db
       .prepare('SELECT sub_library_id, COUNT(*) as count FROM photos GROUP BY sub_library_id')
       .all() as { sub_library_id: number | null; count: number }[]
-    const map: Record<string, number> = { null: 0 }
-    rows.forEach((r) => { map[String(r.sub_library_id)] = r.count })
+    const map: Record<string, number> = { null: 0, __total: 0 }
+    directRows.forEach((r) => {
+      map[String(r.sub_library_id)] = r.count
+      map.__total += r.count
+    })
+
+    // 父库计数包含所有后代子库，避免“年份父库”看起来为空。
+    const nestedRows = db.prepare(`
+      WITH RECURSIVE descendants(root_id, id) AS (
+        SELECT id, id FROM sub_libraries
+        UNION ALL
+        SELECT descendants.root_id, child.id
+        FROM descendants
+        JOIN sub_libraries child ON child.parent_id = descendants.id
+      )
+      SELECT descendants.root_id AS sub_library_id, COUNT(photos.id) AS count
+      FROM descendants
+      LEFT JOIN photos ON photos.sub_library_id = descendants.id
+      GROUP BY descendants.root_id
+    `).all() as { sub_library_id: number; count: number }[]
+    nestedRows.forEach((row) => { map[String(row.sub_library_id)] = row.count })
     return map
   })
 }

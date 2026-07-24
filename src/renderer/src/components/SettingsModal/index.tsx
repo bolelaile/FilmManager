@@ -483,39 +483,30 @@ export default function SettingsModal({ open, onClose, onAttrChange }: SettingsM
                     <div style={{ color: '#c8832a', fontSize: 12, marginTop: 4 }}>v{appVersion}</div>
                   </div>
                 </div>
-                <Divider style={{ borderColor: '#252525', margin: '0 0 16px 0' }} />
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ color: '#888', fontSize: 13 }}>GitHub 仓库</span>
-                    <Button
-                      icon={<GithubOutlined />}
-                      size="small"
-                      onClick={() => window.api.app.openExternal('https://github.com/bolelaile/FilmManager')}
-                      style={{ background: '#1e1e1e', borderColor: '#333', color: '#aaa' }}
+                <Divider style={{ borderColor: '#252525', margin: '0 0 20px 0' }} />
+                <div style={{ display: 'flex', justifyContent: 'center', gap: 12 }}>
+                  {[
+                    { icon: <GithubOutlined style={{ fontSize: 18 }} />, label: 'GitHub 仓库', sub: 'bolelaile/FilmManager', url: 'https://github.com/bolelaile/FilmManager' },
+                    { icon: <span style={{ fontSize: 18 }}>📦</span>, label: 'Releases', sub: '查看所有版本', url: 'https://github.com/bolelaile/FilmManager/releases' },
+                    { icon: <span style={{ fontSize: 18 }}>🐛</span>, label: 'Issues', sub: '反馈问题', url: 'https://github.com/bolelaile/FilmManager/issues' },
+                  ].map((item) => (
+                    <div
+                      key={item.url}
+                      onClick={() => window.api.app.openExternal(item.url)}
+                      style={{
+                        flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
+                        gap: 6, padding: '16px 12px', background: '#111',
+                        border: '1px solid #252525', borderRadius: 10, cursor: 'pointer',
+                        transition: 'border-color 0.15s, background 0.15s'
+                      }}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.borderColor = '#c8832a'; (e.currentTarget as HTMLDivElement).style.background = 'rgba(200,131,42,0.06)' }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.borderColor = '#252525'; (e.currentTarget as HTMLDivElement).style.background = '#111' }}
                     >
-                      bolelaile/FilmManager
-                    </Button>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ color: '#888', fontSize: 13 }}>Releases</span>
-                    <Button
-                      size="small"
-                      onClick={() => window.api.app.openExternal('https://github.com/bolelaile/FilmManager/releases')}
-                      style={{ background: '#1e1e1e', borderColor: '#333', color: '#aaa' }}
-                    >
-                      查看所有版本
-                    </Button>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ color: '#888', fontSize: 13 }}>提交 Issue</span>
-                    <Button
-                      size="small"
-                      onClick={() => window.api.app.openExternal('https://github.com/bolelaile/FilmManager/issues')}
-                      style={{ background: '#1e1e1e', borderColor: '#333', color: '#aaa' }}
-                    >
-                      反馈问题
-                    </Button>
-                  </div>
+                      <span style={{ color: '#888' }}>{item.icon}</span>
+                      <span style={{ color: '#ccc', fontSize: 12, fontWeight: 500 }}>{item.label}</span>
+                      <span style={{ color: '#555', fontSize: 11 }}>{item.sub}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
             )

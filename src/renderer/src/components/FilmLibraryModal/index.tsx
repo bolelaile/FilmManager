@@ -197,12 +197,12 @@ export default function FilmLibraryModal({ open, attrTypes, onClose, onChanged }
         open={open}
         onCancel={onClose}
         footer={
-          <Space>
+          <div style={{ display: 'flex', justifyContent: 'center', gap: 12, padding: '4px 0' }}>
             <Button
               icon={<ImportOutlined />}
               loading={importingJson}
               onClick={handleImportJson}
-              style={{ background: '#1a1a1a', borderColor: '#444', color: '#aaa' }}
+              style={{ background: '#1a1a1a', borderColor: '#3a3a3a', color: '#999', minWidth: 120 }}
             >
               导入 JSON
             </Button>
@@ -210,11 +210,11 @@ export default function FilmLibraryModal({ open, attrTypes, onClose, onChanged }
               type="primary"
               icon={<PlusOutlined />}
               onClick={() => setAddOpen(true)}
-              style={{ background: '#c8832a', borderColor: '#c8832a' }}
+              style={{ background: '#c8832a', borderColor: '#c8832a', minWidth: 120 }}
             >
               新增胶卷
             </Button>
-          </Space>
+          </div>
         }
         width={580}
         mask={false}
@@ -222,7 +222,7 @@ export default function FilmLibraryModal({ open, attrTypes, onClose, onChanged }
         styles={{
           content: { background: '#1a1a1a', border: '1px solid #353535', boxShadow: '0 8px 40px rgba(0,0,0,0.85)' },
           header: { background: '#1a1a1a', borderBottom: '1px solid #252525' },
-          footer: { background: '#1a1a1a', borderTop: '1px solid #252525' },
+          footer: { background: '#1a1a1a', borderTop: '1px solid #252525', padding: '12px 16px' },
           body: { padding: '12px 16px', maxHeight: 500, overflowY: 'auto' }
         }}
       >

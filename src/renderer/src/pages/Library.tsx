@@ -136,7 +136,10 @@ export default function Library() {
   const loadRolls = useCallback(async () => {
     setRollsLoading(true)
     try {
-      const result = await window.api.rolls.list(filter.subLibraryId) as { rolls: Roll[]; photolessCount: number }
+      const result = await window.api.rolls.list({
+        subLibraryId: filter.subLibraryId,
+        filters: filter.filters
+      }) as { rolls: Roll[]; photolessCount: number }
       setRolls(result.rolls)
       setPhotolessCount(result.photolessCount)
     } catch (err) {
@@ -144,7 +147,7 @@ export default function Library() {
     } finally {
       setRollsLoading(false)
     }
-  }, [filter.subLibraryId])
+  }, [filter.subLibraryId, filter.filters])
 
   // 筛选条件变化时重置
   useEffect(() => {
@@ -322,6 +325,7 @@ export default function Library() {
           setCreateRollOpen(false)
           clearSelection()
           loadRolls()
+          loadAttrs()
         }}
       />
 

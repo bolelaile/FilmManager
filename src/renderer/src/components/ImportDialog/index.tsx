@@ -172,6 +172,11 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
     // 创建卷（单批次模式）
     let rollResult: { rollName: string; imported: number; skipped: number } | null = null
     if (ids.length > 0 && createRollEnabledRef.current) {
+      // 属性一致性检查（警告，不阻断）
+      const check = await window.api.rolls.checkAttrConsistency(ids).catch(() => ({ ok: true, warnings: [] })) as { ok: boolean; warnings: string[] }
+      if (!check.ok) {
+        check.warnings.forEach((w) => message.warning(`建卷提示：${w}`, 6))
+      }
       const rollName = singleRollNameRef.current.trim() || undefined
       await window.api.rolls.create({ photoIds: ids, name: rollName, subLibraryId: subLibIdRef.current ?? null }).catch(() => {})
       rollResult = { rollName: rollName || '本次导入', imported: result.imported, skipped: result.skipped }

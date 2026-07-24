@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { Modal, Input, Space, Button, message } from 'antd'
-import { BlockOutlined } from '@ant-design/icons'
+import { BlockOutlined, WarningOutlined } from '@ant-design/icons'
 import { useStore } from '../../store'
 
 interface CreateRollModalProps {
@@ -15,11 +15,7 @@ export default function CreateRollModal({ open, selectedIds, onClose, onCreated 
   const [saving, setSaving] = useState(false)
   const { filter } = useStore()
 
-  const handleCreate = async () => {
-    if (selectedIds.length === 0) {
-      message.warning('请先选择照片')
-      return
-    }
+  const doCreate = async () => {
     setSaving(true)
     try {
       const rollId = await window.api.rolls.create({
@@ -35,6 +31,47 @@ export default function CreateRollModal({ open, selectedIds, onClose, onCreated 
     } finally {
       setSaving(false)
     }
+  }
+
+  const handleCreate = async () => {
+    if (selectedIds.length === 0) {
+      message.warning('请先选择照片')
+      return
+    }
+
+    // 属性一致性检查
+    const check = await window.api.rolls.checkAttrConsistency(selectedIds) as { ok: boolean; warnings: string[] }
+    if (!check.ok) {
+      Modal.confirm({
+        title: (
+          <Space>
+            <WarningOutlined style={{ color: '#faad14' }} />
+            属性不一致
+          </Space>
+        ),
+        content: (
+          <div style={{ paddingTop: 8 }}>
+            <div style={{ color: '#aaa', marginBottom: 8 }}>所选照片存在以下属性不一致：</div>
+            {check.warnings.map((w, i) => (
+              <div key={i} style={{ color: '#faad14', marginBottom: 4 }}>• {w}</div>
+            ))}
+            <div style={{ color: '#888', marginTop: 12, fontSize: 12 }}>建议同一卷内照片使用相同胶卷与相机，是否仍要继续建卷？</div>
+          </div>
+        ),
+        okText: '仍然建卷',
+        cancelText: '取消',
+        okButtonProps: { style: { background: '#c8832a', borderColor: '#c8832a' } },
+        styles: {
+          content: { background: '#1a1a1a', border: '1px solid #353535' },
+          header: { background: '#1a1a1a', borderBottom: '1px solid #252525' }
+        },
+        mask: false,
+        onOk: doCreate
+      })
+      return
+    }
+
+    await doCreate()
   }
 
   return (

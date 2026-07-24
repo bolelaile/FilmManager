@@ -105,7 +105,8 @@ const api = {
   },
   // 卷管理
   rolls: {
-    list: (subLibraryId?: number) => ipcRenderer.invoke('rolls:list', subLibraryId),
+    list: (params?: { subLibraryId?: number; filters?: Record<number, number[]> }) => ipcRenderer.invoke('rolls:list', params),
+    checkAttrConsistency: (photoIds: number[]) => ipcRenderer.invoke('rolls:checkAttrConsistency', photoIds),
     create: (params: { photoIds: number[]; name?: string; subLibraryId?: number | null }) => ipcRenderer.invoke('rolls:create', params),
     rename: (id: number, name: string) => ipcRenderer.invoke('rolls:rename', id, name),
     delete: (id: number) => ipcRenderer.invoke('rolls:delete', id),

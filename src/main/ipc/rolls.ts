@@ -25,9 +25,49 @@ interface AttrRow {
 }
 
 export function registerRollsIpc(): void {
-  // 列出所有卷（含每卷照片数、封面缩略图、属性摘要）
-  ipcMain.handle('rolls:list', (_, subLibraryId?: number) => {
+  // 检查照片属性一致性（胶卷类型、相机型号）
+  ipcMain.handle('rolls:checkAttrConsistency', (_, photoIds: number[]) => {
+    if (!photoIds || photoIds.length === 0) return { ok: true, warnings: [] }
     const db = getDb()
+    const ph = photoIds.map(() => '?').join(',')
+
+    const filmValues = db.prepare(`
+      SELECT DISTINCT av.value FROM photo_attributes pa
+      JOIN attribute_types at ON at.id = pa.attribute_type_id
+      JOIN attribute_values av ON av.id = pa.attribute_value_id
+      WHERE pa.photo_id IN (${ph}) AND at.key = 'film'
+    `).all(...photoIds) as { value: string }[]
+
+    const cameraValues = db.prepare(`
+      SELECT DISTINCT av.value FROM photo_attributes pa
+      JOIN attribute_types at ON at.id = pa.attribute_type_id
+      JOIN attribute_values av ON av.id = pa.attribute_value_id
+      WHERE pa.photo_id IN (${ph}) AND at.key = 'camera'
+    `).all(...photoIds) as { value: string }[]
+
+    const warnings: string[] = []
+    if (filmValues.length > 1) {
+      warnings.push(`胶卷类型不一致：${filmValues.map((v) => v.value).join('、')}`)
+    }
+    if (cameraValues.length > 1) {
+      warnings.push(`相机型号不一致：${cameraValues.map((v) => v.value).join('、')}`)
+    }
+    return { ok: warnings.length === 0, warnings }
+  })
+
+  // 列出所有卷（含每卷照片数、封面缩略图、属性摘要）
+  ipcMain.handle('rolls:list', (_, params?: { subLibraryId?: number; filters?: Record<number, number[]> } | number) => {
+    const db = getDb()
+    // 兼容旧签名（直接传 subLibraryId number）
+    let subLibraryId: number | undefined
+    let filters: Record<number, number[]> = {}
+    if (typeof params === 'number') {
+      subLibraryId = params
+    } else if (params && typeof params === 'object') {
+      subLibraryId = params.subLibraryId
+      filters = params.filters ?? {}
+    }
+
     let sql = `
       SELECT r.*, COUNT(pr.photo_id) as photo_count,
              p.thumb_path, p.thumb_ready
@@ -36,10 +76,27 @@ export function registerRollsIpc(): void {
       LEFT JOIN photos p ON p.id = r.cover_photo_id
     `
     const args: unknown[] = []
+    const wheres: string[] = []
+
     if (subLibraryId != null) {
-      sql += ' WHERE r.sub_library_id = ?'
+      wheres.push('r.sub_library_id = ?')
       args.push(subLibraryId)
     }
+
+    // 属性过滤：每个类型至少有一张照片包含指定属性值
+    for (const [typeId, valueIds] of Object.entries(filters)) {
+      if (!valueIds || (valueIds as number[]).length === 0) continue
+      const valPh = (valueIds as number[]).map(() => '?').join(',')
+      wheres.push(`EXISTS (
+        SELECT 1 FROM photo_rolls pr2
+        JOIN photo_attributes pa ON pa.photo_id = pr2.photo_id
+        WHERE pr2.roll_id = r.id AND pa.attribute_type_id = ${typeId}
+          AND pa.attribute_value_id IN (${valPh})
+      )`)
+      args.push(...(valueIds as number[]))
+    }
+
+    if (wheres.length > 0) sql += ' WHERE ' + wheres.join(' AND ')
     sql += ' GROUP BY r.id ORDER BY r.created_at DESC'
     const rolls = db.prepare(sql).all(...args) as RollRow[]
 

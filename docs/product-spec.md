@@ -1,13 +1,13 @@
 # FilmManager 产品规格文档
 
-**版本：** 1.1.7
+**版本：** 1.1.8
 **技术栈：** Electron 29 · React 18 · Ant Design 5 · better-sqlite3 · Sharp · electron-vite
 
 ---
 
 ## 一、产品概述
 
-FilmManager 是一款面向胶片摄影爱好者的本地桌面应用，用于管理胶片扫描文件。核心功能包括：导入并索引本地扫描文件（支持 EXIF 自动读取拍摄日期和相机型号）、按相机 / 胶卷 / 镜头等属性分类标注（支持多选批量编辑）、虚拟子库分组（含照片数统计）、拍摄地点地图标记、全屏预览（支持 RAW 解码与 ICC 色彩配置）。数据完全本地存储，不依赖云服务。
+FilmManager 是一款面向胶片摄影爱好者的本地桌面应用，用于管理胶片扫描文件。核心功能包括：导入并索引本地扫描文件（支持 EXIF 自动读取拍摄日期和相机型号）、按相机 / 胶卷 / 镜头等属性分类标注（支持多选批量编辑）、与本地目录同步的树状子库（含照片数统计）、拍摄地点地图标记、全屏预览（支持 RAW 解码与 ICC 色彩配置）。数据完全本地存储，不依赖云服务。
 
 ---
 
@@ -20,7 +20,7 @@ FilmManager 是一款面向胶片摄影爱好者的本地桌面应用，用于�
 | 表名 | 说明 | 行数量级 |
 |---|---|---|
 | `photos` | 核心照片记录 | 数千—数万张 |
-| `sub_libraries` | 虚拟子库（树形） | 数十个 |
+| `sub_libraries` | 本地树状子库 | 数十个 |
 | `attribute_types` | 属性类别定义 | 约 7 个（可扩展） |
 | `attribute_values` | 各类别的可选值 | 数百个 |
 | `attribute_value_aliases` | 属性值别名（胶片、相机、镜头等） | 数百个 |
@@ -82,7 +82,7 @@ CREATE INDEX idx_photos_imported_at  ON photos(imported_at);
 
 ---
 
-### 2.3 sub_libraries — 子库（虚拟文件夹）
+### 2.3 sub_libraries — 子库（本地树状文件夹）
 
 ```sql
 CREATE TABLE sub_libraries (
@@ -90,6 +90,7 @@ CREATE TABLE sub_libraries (
   name        TEXT    NOT NULL,
   description TEXT    DEFAULT '',
   parent_id   INTEGER REFERENCES sub_libraries(id) ON DELETE SET NULL,
+  folder_name TEXT,
   sort_order  INTEGER DEFAULT 0,
   created_at  TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
 );
@@ -103,11 +104,16 @@ CREATE TABLE sub_libraries (
 | `name` | 子库显示名称 |
 | `description` | 可选描述文字 |
 | `parent_id` | 父级子库 ID，`NULL` 表示顶层；支持无限层级嵌套 |
+| `folder_name` | `{libraryRoot}/files/` 下对应的安全目录名；用于处理非法字符和同名目录 |
 | `sort_order` | 同级排序值，越小越靠前 |
 | `created_at` | 创建时间 |
 
 **业务规则**
-- 删除子库：照片的 `sub_library_id` 置 NULL（照片保留，移入"未分类"）
+- 新建子库：创建数据库记录的同时，在父级物理目录下创建对应文件夹
+- 导入或移动照片：文件移动到目标子库物理目录，并同步更新 `photos.file_path` 与 `sub_library_id`
+- 重命名子库：移动完整目录树，并更新其内所有照片的绝对路径
+- 删除子库：直属照片及文件移到 `{libraryRoot}/files/`；直属子库及其目录树提升到根级
+- 启动迁移：旧版扁平文件按现有 `sub_library_id` 幂等迁移到真实目录树；同名文件自动追加数字后缀
 - 前端以递归树形结构展示，`children` 字段由查询时组装
 
 ---
@@ -401,7 +407,7 @@ AttributeType（类别）  →  AttributeValue（可选值）  →  photo_attrib
 **导入流程**
 1. 选择/拖入文件夹
 2. 配置属性（可选）：选择相机、胶片、子库等
-3. 点击"导入"→ 递归扫描所有支持格式的文件
+3. 点击"导入"→ 递归扫描所有支持格式的文件，并直接复制到目标子库对应的本地目录
 4. **EXIF 自动读取**：每个文件导入时通过 Sharp 提取 EXIF 缓冲区，并由 `exif-reader` 解析标准 IFD 标签
    - 若 EXIF 含 `DateTimeOriginal`（1970–2099 范围内），自动填充 `shot_date`
    - 读取 `Make` + `Model` 生成规范化相机名称，读取 `LensMake` + `LensModel` 生成规范化镜头名称
@@ -411,14 +417,14 @@ AttributeType（类别）  →  AttributeValue（可选值）  →  photo_attrib
 5. 实时进度条显示（已导入 / 跳过 / 总数）
 6. 后台异步生成缩略图
 
-**跳过规则**：`file_path` 已存在的文件跳过（不重复导入）
+**同名规则**：目标目录中已有同名文件时自动追加 `_1`、`_2` 等后缀，不覆盖现有文件。
 
 **EXIF 优先级**：用户在导入对话框手动选择的相机、镜头和日期优先于 EXIF；批量属性写入仍在自动识别之后执行，确保手动选择为最终结果。
 
 ### 5.5 子库管理
 
-- **树形结构**：左侧边栏展示，支持无限层级
-- **操作**：新建（顶层或在某子库下）· 重命名 · 删除（照片保留，移入未分类）
+- **树形结构**：左侧边栏与 `{libraryRoot}/files/` 真实目录树一致，支持无限层级
+- **操作**：新建同步创建目录；重命名同步移动目录树；删除时直属照片移到根目录、直属子库提升到根级
 - **照片计数**：每个子库显示照片数量（含子级）
 - **过滤**：点击子库名显示该库及全部后代子库照片；点击叶子子库仍为精确筛选
 
@@ -453,8 +459,10 @@ AttributeType（类别）  →  AttributeValue（可选值）  →  photo_attrib
 
 ### 5.10 批量照片操作
 
-- 选中一张或多张照片后，顶栏提供顺时针旋转 90° 和移动到子库操作
-- 移动弹窗支持任意层级子库或“未分类（根目录）”，移动后刷新当前列表和子库计数
+- 右键未选照片时仅选中该照片；右键已选照片时保留当前多选集合，菜单操作作用于全部已选照片
+- 右键菜单提供单张/批量属性编辑、顺时针旋转 90°、移动到子库和“从库中移除”；批量移除前显示确认对话框且保留本地文件
+- 选中一张或多张照片后，顶栏只保留带选中数量徽标的建卷入口；其他批量操作统一从右键菜单进入
+- 移动弹窗支持任意层级子库或“未分类（根目录）”，同时移动本地文件并更新绝对路径，随后刷新当前列表和子库计数
 - 详情抽屉中的“所属子库”下拉继续支持单张照片移动
 
 **属性管理 Tab**
@@ -485,7 +493,7 @@ AttributeType（类别）  →  AttributeValue（可选值）  →  photo_attrib
 | `photos.delete(ids, deleteFile)` | 删除照片（deleteFile=true 同时删除磁盘文件） |
 | `photos.fullPreview(filePath, iccPath?, rotation?)` | 生成带持久化旋转角度的全屏预览 dataURL（含 RAW 解码） |
 | `photos.thumbDataUrl(thumbPath)` | 获取缩略图 dataURL |
-| `photos.moveToSubLibrary(ids, subLibId)` | 批量移动到子库 |
+| `photos.moveToSubLibrary(ids, subLibId)` | 批量移动照片及本地文件，返回 `{ moved, unchanged, failed }` |
 | `photos.setRotation(id, rotation)` | 设置单张照片旋转角度并重建缩略图 |
 | `photos.batchRotate(ids, delta?)` | 批量顺时针旋转，默认 90° |
 
@@ -569,6 +577,7 @@ AttributeType（类别）  →  AttributeValue（可选值）  →  photo_attrib
 | 数据类型 | 存储路径 |
 |---|---|
 | 数据库文件 | `{libraryRoot}/film.db` |
+| 原始照片 | `{libraryRoot}/files/{子库}/{子子库}/文件名`；未分类照片位于 `files/` 根目录 |
 | 缩略图 | `{libraryRoot}/thumbs/` |
 | 内置 ICC 配置文件 | `{appPath}/resources/profiles/` |
 | 用户 ICC 配置文件 | `{userData}/profiles/` |
@@ -576,7 +585,7 @@ AttributeType（类别）  →  AttributeValue（可选值）  →  photo_attrib
 | 用户自定义胶卷图标 | `{userData}/film-icons/` |
 | 应用日志 | `{userData}/logs/` （electron-log） |
 
-`libraryRoot` 默认为 `{userData}/library`，用户可通过 `app.setLibraryRoot()` 修改。
+`libraryRoot` 默认为系统图片目录下的 `FilmManager`，用户可通过 `app.setLibraryRoot()` 修改。
 
 ---
 
@@ -590,6 +599,10 @@ AttributeType（类别）  →  AttributeValue（可选值）  →  photo_attrib
 | 迁移 1 | `ALTER TABLE attribute_values ADD COLUMN icon_key TEXT`（胶卷图标支持） |
 | 迁移 2 | `ALTER TABLE photos ADD COLUMN shot_date TEXT`（拍摄日期支持） |
 | 迁移 3 | 创建 locations, photo_locations 表及索引（地点功能） |
+| 迁移 4 | `ALTER TABLE photos ADD COLUMN rotation INTEGER NOT NULL DEFAULT 0`（持久化旋转） |
+| 迁移 5 | 创建 attribute_value_aliases 表及索引（属性别名） |
+| 迁移 6 | 创建 rolls, photo_rolls 表及索引（胶卷卷） |
+| 迁移 7 | `ALTER TABLE sub_libraries ADD COLUMN folder_name TEXT`，并把旧版扁平文件迁移到真实子库目录树 |
 
 迁移均使用 `try { ALTER TABLE ... } catch {}` 忽略已存在列的错误，保证幂等性。
 
@@ -610,6 +623,9 @@ AttributeType（类别）  →  AttributeValue（可选值）  →  photo_attrib
 | **1.1.3** | **胶卷卷功能**：选照片建卷（rolls 表）、自动/手动命名、卷视图（RollsView）与照片视图切换、未分卷"其他图片"汇总；新增 `rolls` / `photo_rolls` 表与 rolls IPC 模块 |
 | **1.1.4** | **增强导入**：ImportDialog 新增"按子文件夹识别为卷"切换；启用后调用 `import:scanFolders` 枚举子目录并模糊匹配属性，逐行确认表格可编辑卷名/属性/地点/日期，确认后调用 `import:importRolls` 批量导入并自动建卷 |
 | **1.1.5** | **智能文件夹解析**：父子层级属性推断（父文件夹=相机或胶卷，子文件夹补充另一属性，双向兼容）；复合命名正则解析（`YYYYMMDD` / `YYYY-MM-DD` / `YYMM` 等 6 种日期格式自动提取为拍摄日期）；确认界面每个属性旁显示来源标注（↑父 / ↓子），便于用户核查 |
+| **1.1.6** | 目录名识别忽略大小写和常见分隔符 |
+| **1.1.7** | 胶片、相机和镜头别名，文件夹与 EXIF 别名匹配，JSON 批量导入 |
+| **1.1.8** | **本地树状整理**：子库对应真实目录；已有图库自动迁移，导入、照片移动、子库重命名和删除均同步磁盘文件 |
 
 ## 十、功能扩展建议（已实现）
 

@@ -1,6 +1,14 @@
 import React, { useRef, useCallback, useEffect, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { Spin, Empty, message } from 'antd'
+import { Spin, Empty, Modal, message } from 'antd'
+import {
+  CopyOutlined,
+  DeleteOutlined,
+  EditOutlined,
+  FolderOpenOutlined,
+  FolderOutlined,
+  RotateRightOutlined
+} from '@ant-design/icons'
 import type { Photo, AttributeType } from '../../types'
 import PhotoCard from './PhotoCard'
 import { useStore } from '../../store'
@@ -32,14 +40,17 @@ interface PhotoGridProps {
   attrTypes: AttributeType[]
   onLoadMore: () => void
   onOpenViewer: (photo: Photo, index: number) => void
+  onBatchEdit: () => void
+  onBatchRotate: () => void
+  onMoveToSubLibrary: () => void
   onPhotoDeleted: () => void
 }
 
-interface ContextMenuState { photo: Photo; x: number; y: number }
+interface ContextMenuState { photo: Photo; targetIds: number[]; x: number; y: number }
 
 export default function PhotoGrid({
   photos, loading, hasMore, attrTypes,
-  onLoadMore, onOpenViewer, onPhotoDeleted
+  onLoadMore, onOpenViewer, onBatchEdit, onBatchRotate, onMoveToSubLibrary, onPhotoDeleted
 }: PhotoGridProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const { thumbnailSize, selectedIds, toggleSelect, selectAll, clearSelection } = useStore()
@@ -193,8 +204,10 @@ export default function PhotoGrid({
   }, [photos, cols, cardWidth, rowHeight, isSmall, selectAll])
 
   const handleContextMenu = useCallback((photo: Photo, x: number, y: number) => {
-    setContextMenu({ photo, x, y })
-  }, [])
+    const targetIds = selectedIds.has(photo.id) ? [...selectedIds] : [photo.id]
+    if (!selectedIds.has(photo.id)) selectAll([photo.id])
+    setContextMenu({ photo, targetIds, x, y })
+  }, [selectedIds, selectAll])
 
   const handleRevealFile = () => {
     if (!contextMenu) return
@@ -209,11 +222,40 @@ export default function PhotoGrid({
   }
   const handleDeleteFromLib = async () => {
     if (!contextMenu) return
-    const id = contextMenu.photo.id
+    const targetIds = contextMenu.targetIds
     setContextMenu(null)
-    await window.api.photos.delete([id], false)
-    message.success('已从库中移除')
-    onPhotoDeleted()
+    const remove = async () => {
+      await window.api.photos.delete(targetIds, false)
+      clearSelection()
+      message.success(`已从库中移除 ${targetIds.length} 张照片`)
+      onPhotoDeleted()
+    }
+    if (targetIds.length === 1) {
+      await remove()
+      return
+    }
+    Modal.confirm({
+      title: `从库中移除 ${targetIds.length} 张照片？`,
+      content: '只移除 FilmManager 中的索引，本地照片文件会保留。',
+      okText: '移除',
+      cancelText: '取消',
+      onOk: remove
+    })
+  }
+  const handleBatchEdit = () => {
+    if (!contextMenu) return
+    setContextMenu(null)
+    onBatchEdit()
+  }
+  const handleBatchRotate = () => {
+    if (!contextMenu) return
+    setContextMenu(null)
+    onBatchRotate()
+  }
+  const handleMoveToSubLibrary = () => {
+    if (!contextMenu) return
+    setContextMenu(null)
+    onMoveToSubLibrary()
   }
 
   if (!loading && photos.length === 0) {
@@ -225,7 +267,8 @@ export default function PhotoGrid({
   }
 
   const menuX = contextMenu ? Math.min(contextMenu.x, window.innerWidth - 200) : 0
-  const menuY = contextMenu ? Math.min(contextMenu.y, window.innerHeight - 130) : 0
+  const menuY = contextMenu ? Math.min(contextMenu.y, window.innerHeight - 246) : 0
+  const contextTargetCount = contextMenu?.targetIds.length ?? 0
 
   return (
     <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
@@ -315,22 +358,54 @@ export default function PhotoGrid({
           onClick={(e) => e.stopPropagation()}
           onContextMenu={(e) => { e.preventDefault(); e.stopPropagation() }}
         >
-          <CtxItem label="在文件管理器中打开" onClick={handleRevealFile} />
-          <CtxItem label="复制文件路径" onClick={handleCopyPath} />
+          <CtxItem icon={<FolderOpenOutlined />} label="在文件管理器中打开" onClick={handleRevealFile} />
+          <CtxItem icon={<CopyOutlined />} label="复制文件路径" onClick={handleCopyPath} />
           <div style={{ borderTop: '1px solid #2a2a2a', margin: '4px 0' }} />
-          <CtxItem label="从库中删除" onClick={handleDeleteFromLib} danger />
+          <CtxItem
+            icon={<EditOutlined />}
+            label={contextTargetCount > 1 ? `批量编辑属性（${contextTargetCount} 张）` : '编辑属性'}
+            onClick={handleBatchEdit}
+          />
+          <CtxItem
+            icon={<RotateRightOutlined />}
+            label={contextTargetCount > 1 ? `批量旋转 90°（${contextTargetCount} 张）` : '顺时针旋转 90°'}
+            onClick={handleBatchRotate}
+          />
+          <CtxItem
+            icon={<FolderOutlined />}
+            label={contextTargetCount > 1 ? `批量移动到子库（${contextTargetCount} 张）` : '移动到子库'}
+            onClick={handleMoveToSubLibrary}
+          />
+          <div style={{ borderTop: '1px solid #2a2a2a', margin: '4px 0' }} />
+          <CtxItem
+            icon={<DeleteOutlined />}
+            label={contextTargetCount > 1 ? `从库中移除（${contextTargetCount} 张）` : '从库中移除'}
+            onClick={handleDeleteFromLib}
+            danger
+          />
         </div>
       )}
     </div>
   )
 }
 
-function CtxItem({ label, onClick, danger }: { label: string; onClick: () => void; danger?: boolean }) {
+function CtxItem({
+  icon,
+  label,
+  onClick,
+  danger
+}: {
+  icon: React.ReactNode
+  label: string
+  onClick: () => void
+  danger?: boolean
+}) {
   const [hovered, setHovered] = useState(false)
   return (
     <div
       style={{
-        padding: '7px 16px', fontSize: 13,
+        minHeight: 32, padding: '7px 12px', fontSize: 13,
+        display: 'flex', alignItems: 'center', gap: 9,
         color: danger ? '#ff6b6b' : '#ccc',
         cursor: 'pointer',
         background: hovered ? '#2a2a2a' : 'transparent',
@@ -340,7 +415,8 @@ function CtxItem({ label, onClick, danger }: { label: string; onClick: () => voi
       onMouseLeave={() => setHovered(false)}
       onClick={onClick}
     >
-      {label}
+      <span style={{ width: 16, display: 'inline-flex', justifyContent: 'center' }}>{icon}</span>
+      <span>{label}</span>
     </div>
   )
 }

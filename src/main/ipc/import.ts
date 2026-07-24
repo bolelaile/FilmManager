@@ -10,6 +10,11 @@ import {
   SUPPORTED_EXTENSIONS,
   getFileType
 } from '../services/thumbnail'
+import {
+  ensureSubLibraryDirectory,
+  ensureUniqueFilePath,
+  getOrCreateSubLibrary as getOrCreatePhysicalSubLibrary
+} from '../services/library-layout'
 import { getLibraryRoot, getThumbDir } from './index'
 
 export type AutoOrganizeMode = 'none' | 'year' | 'year-month' | 'camera' | 'film' | 'source-folder'
@@ -494,25 +499,26 @@ async function importFolder(
 async function importFile(sourcePath: string, options: ImportOptions): Promise<number | null> {
   const db = getDb()
   const libraryRoot = getLibraryRoot()
+  const filesRoot = path.join(libraryRoot, 'files')
   const thumbDir = getThumbDir()
-
-  const destPath = path.join(libraryRoot, 'files', path.basename(sourcePath))
-  const finalDest = ensureUniquePath(destPath)
+  let copiedPath: string | null = null
 
   try {
-    const existing = db.prepare('SELECT id FROM photos WHERE file_path = ?').get(finalDest)
-    if (existing) return null
-
-    fs.mkdirSync(path.dirname(finalDest), { recursive: true })
-    fs.copyFileSync(sourcePath, finalDest)
-
-    const stat = fs.statSync(finalDest)
-    const meta = await getImageMeta(finalDest)
-
-    // Read EXIF for shot_date and camera model
-    const exif = await getExifData(finalDest)
+    const meta = await getImageMeta(sourcePath)
+    const exif = await getExifData(sourcePath)
     const effectiveShotDate = options.shotDate ?? exif.shotDate
-    const targetSubLibraryId = resolveTargetSubLibrary(options, sourcePath, effectiveShotDate, exif.cameraModel)
+    const targetSubLibraryId = resolveTargetSubLibrary(
+      options,
+      sourcePath,
+      effectiveShotDate,
+      exif.cameraModel,
+      filesRoot
+    )
+    const targetDirectory = ensureSubLibraryDirectory(db, filesRoot, targetSubLibraryId)
+    const finalDest = ensureUniqueFilePath(path.join(targetDirectory, path.basename(sourcePath)))
+    fs.copyFileSync(sourcePath, finalDest)
+    copiedPath = finalDest
+    const stat = fs.statSync(finalDest)
 
     const info = db
       .prepare(
@@ -545,6 +551,12 @@ async function importFile(sourcePath: string, options: ImportOptions): Promise<n
 
     return photoId
   } catch (err) {
+    if (copiedPath) {
+      const imported = db.prepare('SELECT id FROM photos WHERE file_path = ?').get(copiedPath)
+      if (!imported) {
+        try { fs.unlinkSync(copiedPath) } catch {}
+      }
+    }
     log.error('Import file failed', sourcePath, err)
     return null
   }
@@ -622,7 +634,8 @@ function resolveTargetSubLibrary(
   options: ImportOptions,
   sourcePath: string,
   shotDate: string | null,
-  cameraModel: string | null
+  cameraModel: string | null,
+  filesRoot: string
 ): number | undefined {
   const mode = options.organizeBy ?? 'none'
   if (mode === 'none') return options.subLibraryId
@@ -650,38 +663,11 @@ function resolveTargetSubLibrary(
 
   let parentId = options.subLibraryId
   for (const rawName of pathNames) {
-    parentId = getOrCreateSubLibrary(sanitizeSubLibraryName(rawName), parentId)
+    parentId = getOrCreatePhysicalSubLibrary(getDb(), filesRoot, sanitizeSubLibraryName(rawName), parentId)
   }
   return parentId
 }
 
 function sanitizeSubLibraryName(name: string): string {
   return name.replace(/[\u0000-\u001f]/g, '').trim().slice(0, 100) || '未命名'
-}
-
-function getOrCreateSubLibrary(name: string, parentId?: number): number {
-  const db = getDb()
-  const existing = db
-    .prepare('SELECT id FROM sub_libraries WHERE parent_id IS ? AND name = ? COLLATE NOCASE LIMIT 1')
-    .get(parentId ?? null, name) as { id: number } | undefined
-  if (existing) return existing.id
-
-  const maxOrder = (
-    db.prepare('SELECT MAX(sort_order) as value FROM sub_libraries WHERE parent_id IS ?').get(parentId ?? null) as {
-      value: number | null
-    }
-  ).value ?? 0
-  const result = db
-    .prepare('INSERT INTO sub_libraries (name, parent_id, sort_order) VALUES (?, ?, ?)')
-    .run(name, parentId ?? null, maxOrder + 1)
-  return Number(result.lastInsertRowid)
-}
-
-function ensureUniquePath(dest: string): string {
-  if (!fs.existsSync(dest)) return dest
-  const ext = path.extname(dest)
-  const base = dest.slice(0, -ext.length)
-  let i = 1
-  while (fs.existsSync(`${base}_${i}${ext}`)) i++
-  return `${base}_${i}${ext}`
 }

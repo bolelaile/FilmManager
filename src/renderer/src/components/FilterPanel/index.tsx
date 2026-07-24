@@ -195,7 +195,7 @@ export default function FilterPanel({ attrTypes, valueCounts, subLibCounts, filt
               setContextMenu(null)
               Modal.confirm({
                 title: `删除子库“${target.name}”？`,
-                content: '子库中的照片会移入未分类，子子库会提升为顶层，照片文件不会被删除。',
+                content: '直属照片和本地文件会移入图库根目录，子子库及其本地目录会提升为顶层；照片文件不会被删除。',
                 okText: '删除子库',
                 cancelText: '取消',
                 okButtonProps: { danger: true },

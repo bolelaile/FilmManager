@@ -92,7 +92,16 @@ export default function DetailDrawer({ photoId, attrTypes, onClose, onDeleted, o
 
   const handleMoveSubLib = async (subLibId: number | null) => {
     if (!photo) return
-    await window.api.photos.moveToSubLibrary([photo.id], subLibId)
+    const result = await window.api.photos.moveToSubLibrary([photo.id], subLibId) as {
+      moved: number
+      unchanged: number
+      failed: { reason: string }[]
+    }
+    if (result.failed.length > 0) {
+      message.error(`移动失败：${result.failed[0].reason}`)
+    } else {
+      message.success(result.moved > 0 ? '照片和本地文件已移动' : '照片已在目标子库中')
+    }
     load()
     onMoved?.()
   }

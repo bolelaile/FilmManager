@@ -1,7 +1,9 @@
 import { ipcMain } from 'electron'
+import path from 'path'
 import { getDb } from '../db/index'
 import { generateThumbnail, normalizeRotation, renderFullPreview } from '../services/thumbnail'
-import { getThumbDir } from './index'
+import { movePhotosToSubLibrary } from '../services/library-layout'
+import { getLibraryRoot, getThumbDir } from './index'
 import fs from 'fs'
 import log from 'electron-log'
 
@@ -317,11 +319,12 @@ export function registerPhotosIpc(): void {
 
   // 移动到子库
   ipcMain.handle('photos:moveToSubLibrary', (_, photoIds: number[], subLibraryId: number | null) => {
-    const db = getDb()
-    const stmt = db.prepare('UPDATE photos SET sub_library_id = ? WHERE id = ?')
-    const tx = db.transaction(() => { photoIds.forEach((id) => stmt.run(subLibraryId, id)) })
-    tx()
-    return true
+    return movePhotosToSubLibrary(
+      getDb(),
+      path.join(getLibraryRoot(), 'files'),
+      photoIds,
+      subLibraryId
+    )
   })
 }
 

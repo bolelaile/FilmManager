@@ -203,24 +203,6 @@ export default function Library() {
     setViewerPhoto(photo)
   }, [photos, setViewerPhotos, setViewerIndex, setViewerPhoto])
 
-  const handleBatchDelete = async () => {
-    Modal.confirm({
-      title: `删除 ${selectedIds.size} 张照片`,
-      content: '仅从库中移除索引，文件保留在磁盘。如需同时删除文件请在详情面板操作。',
-      okText: '移除',
-      cancelText: '取消',
-      onOk: async () => {
-        await window.api.photos.delete([...selectedIds], false)
-        message.success(`已移除 ${selectedIds.size} 张照片`)
-        clearSelection()
-        loadPhotos(true)
-        loadAttrs()
-        loadSubLibs()
-        loadRolls()
-      }
-    })
-  }
-
   const handleCreateSubLib = async () => {
     if (!newSubLibName.trim()) return
     await window.api.sublib.create(newSubLibName.trim(), filter.subLibraryId)
@@ -250,8 +232,16 @@ export default function Library() {
 
   const handleBatchMove = async () => {
     if (selectedIds.size === 0) return
-    await window.api.photos.moveToSubLibrary([...selectedIds], moveTargetSubLibId)
-    message.success(`已移动 ${selectedIds.size} 张照片`)
+    const result = await window.api.photos.moveToSubLibrary([...selectedIds], moveTargetSubLibId) as {
+      moved: number
+      unchanged: number
+      failed: { reason: string }[]
+    }
+    if (result.failed.length > 0) {
+      message.warning(`已移动 ${result.moved} 张，${result.failed.length} 张本地文件移动失败`)
+    } else {
+      message.success(`已整理 ${result.moved + result.unchanged} 张照片`)
+    }
     clearSelection()
     setMoveSubLibOpen(false)
     loadPhotos(true)
@@ -303,10 +293,6 @@ export default function Library() {
     <Layout style={{ height: '100vh', background: '#141414', overflow: 'hidden' }}>
       <TopBar
         onImport={() => setImportOpen(true)}
-        onBatchDelete={handleBatchDelete}
-        onBatchEdit={() => setBatchEditOpen(true)}
-        onBatchRotate={handleBatchRotate}
-        onMoveToSubLibrary={() => { setMoveTargetSubLibId(null); setMoveSubLibOpen(true) }}
         onCreateSubLib={() => setCreateSubLibOpen(true)}
         onOpenMap={() => setMapOpen(true)}
         onOpenFilmLibrary={() => setFilmLibraryOpen(true)}
@@ -348,6 +334,9 @@ export default function Library() {
               attrTypes={attrTypes}
               onLoadMore={() => loadPhotos(false)}
               onOpenViewer={handleOpenViewer}
+              onBatchEdit={() => setBatchEditOpen(true)}
+              onBatchRotate={handleBatchRotate}
+              onMoveToSubLibrary={() => { setMoveTargetSubLibId(null); setMoveSubLibOpen(true) }}
               onPhotoDeleted={() => { loadPhotos(true); loadAttrs(); loadSubLibs(); loadRolls() }}
             />
           )}

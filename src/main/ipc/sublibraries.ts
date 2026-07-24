@@ -1,5 +1,12 @@
 import { ipcMain } from 'electron'
+import path from 'path'
 import { getDb } from '../db/index'
+import {
+  createSubLibrary,
+  deleteSubLibrary,
+  renameSubLibrary
+} from '../services/library-layout'
+import { getLibraryRoot } from './index'
 
 export function registerSubLibrariesIpc(): void {
   // 获取完整子库树
@@ -12,21 +19,12 @@ export function registerSubLibrariesIpc(): void {
 
   // 新建子库
   ipcMain.handle('sublib:create', (_, name: string, parentId?: number) => {
-    const db = getDb()
-    const maxOrder = (
-      db
-        .prepare('SELECT MAX(sort_order) as m FROM sub_libraries WHERE parent_id IS ?')
-        .get(parentId ?? null) as { m: number }
-    ).m ?? 0
-    const r = db
-      .prepare('INSERT INTO sub_libraries (name, parent_id, sort_order) VALUES (?, ?, ?)')
-      .run(name.trim(), parentId ?? null, maxOrder + 1)
-    return r.lastInsertRowid
+    return createSubLibrary(getDb(), getFilesRoot(), name, parentId)
   })
 
   // 重命名
   ipcMain.handle('sublib:rename', (_, id: number, name: string) => {
-    getDb().prepare('UPDATE sub_libraries SET name = ? WHERE id = ?').run(name.trim(), id)
+    renameSubLibrary(getDb(), getFilesRoot(), id, name)
     return true
   })
 
@@ -38,11 +36,7 @@ export function registerSubLibrariesIpc(): void {
 
   // 删除（将内部照片置为未分类）
   ipcMain.handle('sublib:delete', (_, id: number) => {
-    const db = getDb()
-    db.prepare('UPDATE photos SET sub_library_id = NULL WHERE sub_library_id = ?').run(id)
-    // 子子库也上移
-    db.prepare('UPDATE sub_libraries SET parent_id = NULL WHERE parent_id = ?').run(id)
-    db.prepare('DELETE FROM sub_libraries WHERE id = ?').run(id)
+    deleteSubLibrary(getDb(), getFilesRoot(), id)
     return true
   })
 
@@ -77,7 +71,11 @@ export function registerSubLibrariesIpc(): void {
   })
 }
 
-interface SubLibRow { id: number; name: string; description: string; parent_id: number | null; sort_order: number; created_at: string }
+function getFilesRoot(): string {
+  return path.join(getLibraryRoot(), 'files')
+}
+
+interface SubLibRow { id: number; name: string; description: string; parent_id: number | null; folder_name?: string | null; sort_order: number; created_at: string }
 interface SubLibNode extends SubLibRow { children: SubLibNode[] }
 
 function buildTree(rows: SubLibRow[]): SubLibNode[] {

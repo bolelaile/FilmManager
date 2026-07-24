@@ -1,4 +1,4 @@
-import { app, BrowserWindow, nativeTheme, ipcMain, protocol, net, dialog } from 'electron'
+import { app, BrowserWindow, nativeTheme, ipcMain, protocol, net, dialog, shell } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import log from 'electron-log'
@@ -144,6 +144,55 @@ ipcMain.handle('app:setLibraryRoot', (_, newRoot: string) => {
 })
 
 ipcMain.handle('app:getLibraryRoot', () => getLibraryRoot())
+
+// 选择新的图片存储目录（弹文件夹对话框）
+ipcMain.handle('app:pickLibraryRoot', async (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  const result = await dialog.showOpenDialog(win!, {
+    properties: ['openDirectory'],
+    title: '选择图片存储目录'
+  })
+  if (result.canceled || !result.filePaths[0]) return null
+  return result.filePaths[0]
+})
+
+// 获取应用版本
+ipcMain.handle('app:getVersion', () => app.getVersion())
+
+// 读取最新 log 内容（最后 N 行）
+ipcMain.handle('app:getLogContent', (_, maxLines: number = 200) => {
+  try {
+    const logPath = log.transports.file.getFile().path
+    if (!fs.existsSync(logPath)) return ''
+    const content = fs.readFileSync(logPath, 'utf-8')
+    const lines = content.split('\n')
+    return lines.slice(-maxLines).join('\n')
+  } catch {
+    return ''
+  }
+})
+
+// 获取 log 文件路径
+ipcMain.handle('app:getLogPath', () => {
+  try {
+    return log.transports.file.getFile().path
+  } catch {
+    return ''
+  }
+})
+
+// 在文件管理器中打开 log 文件所在目录
+ipcMain.handle('app:revealLog', () => {
+  try {
+    const logPath = log.transports.file.getFile().path
+    shell.showItemInFolder(logPath)
+  } catch {}
+})
+
+// 用系统浏览器打开外部 URL（仅允许 https://github.com 开头）
+ipcMain.handle('app:openExternal', (_, url: string) => {
+  if (url.startsWith('https://github.com/')) shell.openExternal(url)
+})
 
 ipcMain.handle('win:minimize', (e) => BrowserWindow.fromWebContents(e.sender)?.minimize())
 ipcMain.handle('win:maximize', (e) => {

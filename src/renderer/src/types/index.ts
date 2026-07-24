@@ -11,6 +11,7 @@ export interface Photo {
   sub_library_id?: number
   imported_at: string
   shot_date?: string | null
+  rotation: 0 | 90 | 180 | 270
   notes: string
   attributes: PhotoAttribute[]
 }
@@ -58,6 +59,58 @@ export interface IccProfile {
   isPreset: boolean
 }
 
+export interface FolderScanResult {
+  name: string
+  folderPath: string
+  fileCount: number
+  matches: FolderAttrMatch[]        // matches from child folder name
+  parentMatches: FolderAttrMatch[]  // matches from parent (root) folder name
+  parsedDate: string | null         // YYYY-MM-DD or YYYY-MM-01 extracted from name
+  inferredRollName: string          // pre-built suggested roll name
+}
+
+export interface FolderAttrMatch {
+  typeId: number
+  valueId: number
+  value: string
+  key: string
+  iconKey?: string | null
+  matchedAlias: string | null  // null = matched by primary name; non-null = matched via this alias
+}
+
+export interface RollImportConfig {
+  folderPath: string
+  rollName: string
+  attrs: { typeId: number; valueId: number }[]
+  locationId?: number | null
+  shotDate?: string | null
+  subLibraryId?: number | null
+  createRoll: boolean
+}
+
+export interface Roll {
+  id: number
+  name: string
+  sub_library_id: number | null
+  cover_photo_id: number | null
+  created_at: string
+  photo_count: number
+  thumb_path?: string
+  thumb_ready?: number
+  attributes: RollAttribute[]
+  location_name: string | null
+}
+
+export interface RollAttribute {
+  roll_id: number
+  attribute_type_id: number
+  key: string
+  display_name: string
+  value: string
+  value_id: number
+  icon_key?: string
+}
+
 export interface Location {
   id: number
   name: string
@@ -75,12 +128,24 @@ export interface LocationSearchResult {
   lng: number
 }
 
+export type AutoOrganizeMode = 'none' | 'year' | 'year-month' | 'camera' | 'film' | 'source-folder'
+
+export type OrganizationStatus = 'unclassified' | 'missing_date' | 'missing_camera'
+
+export interface PhotoFilterOptions {
+  fileTypes: { value: string; count: number }[]
+  statusCounts: Record<OrganizationStatus, number>
+}
+
 export interface FilterState {
   filters: Record<number, number[]> // typeId -> [valueId, ...]
   subLibraryId?: number
   search?: string
   dateFrom?: string
   dateTo?: string
-  sortBy: 'imported_at' | 'file_name'
+  dateField: 'imported_at' | 'shot_date'
+  fileTypes?: string[]
+  organizationStatuses?: OrganizationStatus[]
+  sortBy: 'imported_at' | 'shot_date' | 'file_name'
   sortOrder: 'asc' | 'desc'
 }

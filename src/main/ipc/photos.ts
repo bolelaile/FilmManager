@@ -1,6 +1,9 @@
 import { ipcMain } from 'electron'
+import path from 'path'
 import { getDb } from '../db/index'
-import { renderFullPreview } from '../services/thumbnail'
+import { generateThumbnail, normalizeRotation, renderFullPreview } from '../services/thumbnail'
+import { movePhotosToSubLibrary } from '../services/library-layout'
+import { getLibraryRoot, getThumbDir } from './index'
 import fs from 'fs'
 import log from 'electron-log'
 
@@ -18,16 +21,36 @@ export function registerPhotosIpc(): void {
         search?: string
         dateFrom?: string
         dateTo?: string
-        sortBy?: 'imported_at' | 'file_name'
+        dateField?: 'imported_at' | 'shot_date'
+        fileTypes?: string[]
+        organizationStatuses?: ('unclassified' | 'missing_date' | 'missing_camera')[]
+        sortBy?: 'imported_at' | 'shot_date' | 'file_name'
         sortOrder?: 'asc' | 'desc'
       }
     ) => {
       try {
       const db = getDb()
-      const { page, pageSize, filters, subLibraryId, search, dateFrom, dateTo, sortBy = 'imported_at', sortOrder = 'desc' } = params
+      const {
+        page,
+        pageSize,
+        filters,
+        subLibraryId,
+        search,
+        dateFrom,
+        dateTo,
+        dateField = 'imported_at',
+        fileTypes = [],
+        organizationStatuses = [],
+        sortBy = 'imported_at',
+        sortOrder = 'desc'
+      } = params
       const offset = (page - 1) * pageSize
-      // 'file_name' is the UI key; actual column is 'original_name'
-      const sortCol = sortBy === 'file_name' ? 'original_name' : sortBy
+      const sortExpression = sortBy === 'file_name'
+        ? 'p.original_name'
+        : sortBy === 'shot_date'
+          ? 'COALESCE(p.shot_date, p.imported_at)'
+          : 'p.imported_at'
+      const dateColumn = dateField === 'shot_date' ? 'p.shot_date' : 'p.imported_at'
 
       let sql = `SELECT DISTINCT p.* FROM photos p`
       const args: unknown[] = []
@@ -42,13 +65,45 @@ export function registerPhotosIpc(): void {
       }
 
       const wheres: string[] = []
-      if (subLibraryId != null) { wheres.push('p.sub_library_id = ?'); args.push(subLibraryId) }
+      if (subLibraryId != null) {
+        wheres.push(`p.sub_library_id IN (
+          WITH RECURSIVE descendants(id) AS (
+            SELECT ?
+            UNION ALL
+            SELECT child.id
+            FROM sub_libraries child
+            JOIN descendants parent ON child.parent_id = parent.id
+          )
+          SELECT id FROM descendants
+        )`)
+        args.push(subLibraryId)
+      }
       if (search) { wheres.push("p.original_name LIKE ?"); args.push(`%${search}%`) }
-      if (dateFrom) { wheres.push("p.imported_at >= ?"); args.push(dateFrom) }
-      if (dateTo) { wheres.push("p.imported_at <= ?"); args.push(dateTo + ' 23:59:59') }
+      if (dateFrom) { wheres.push(`${dateColumn} >= ?`); args.push(dateFrom) }
+      if (dateTo) {
+        wheres.push(`${dateColumn} <= ?`)
+        args.push(dateField === 'shot_date' ? dateTo : dateTo + ' 23:59:59')
+      }
+      if (fileTypes.length > 0) {
+        wheres.push(`p.file_type IN (${fileTypes.map(() => '?').join(',')})`)
+        args.push(...fileTypes)
+      }
+      if (organizationStatuses.includes('unclassified')) {
+        wheres.push('p.sub_library_id IS NULL')
+      }
+      if (organizationStatuses.includes('missing_date')) {
+        wheres.push("(p.shot_date IS NULL OR p.shot_date = '')")
+      }
+      if (organizationStatuses.includes('missing_camera')) {
+        wheres.push(`NOT EXISTS (
+          SELECT 1 FROM photo_attributes status_pa
+          JOIN attribute_types status_at ON status_at.id = status_pa.attribute_type_id
+          WHERE status_pa.photo_id = p.id AND status_at.key = 'camera'
+        )`)
+      }
 
       if (wheres.length) sql += ' WHERE ' + wheres.join(' AND ')
-      sql += ` ORDER BY p.${sortCol} ${sortOrder}`
+      sql += ` ORDER BY ${sortExpression} ${sortOrder === 'asc' ? 'ASC' : 'DESC'}`
 
       const countSql = `SELECT COUNT(*) as total FROM (${sql}) t`
       const total = (db.prepare(countSql).get(...args) as { total: number }).total
@@ -84,6 +139,33 @@ export function registerPhotosIpc(): void {
       }
     }
   )
+
+  ipcMain.handle('photos:filterOptions', () => {
+    const db = getDb()
+    const fileTypes = db
+      .prepare('SELECT file_type as value, COUNT(*) as count FROM photos GROUP BY file_type ORDER BY file_type')
+      .all() as { value: string; count: number }[]
+    const statusCounts = db.prepare(`
+      SELECT
+        SUM(CASE WHEN p.sub_library_id IS NULL THEN 1 ELSE 0 END) AS unclassified,
+        SUM(CASE WHEN p.shot_date IS NULL OR p.shot_date = '' THEN 1 ELSE 0 END) AS missing_date,
+        SUM(CASE WHEN NOT EXISTS (
+          SELECT 1 FROM photo_attributes pa
+          JOIN attribute_types at ON at.id = pa.attribute_type_id
+          WHERE pa.photo_id = p.id AND at.key = 'camera'
+        ) THEN 1 ELSE 0 END) AS missing_camera
+      FROM photos p
+    `).get() as { unclassified: number | null; missing_date: number | null; missing_camera: number | null }
+
+    return {
+      fileTypes,
+      statusCounts: {
+        unclassified: statusCounts.unclassified ?? 0,
+        missing_date: statusCounts.missing_date ?? 0,
+        missing_camera: statusCounts.missing_camera ?? 0
+      }
+    }
+  })
 
   // 获取单张照片详情
   ipcMain.handle('photos:get', (_, id: number) => {
@@ -179,14 +261,50 @@ export function registerPhotosIpc(): void {
   })
 
   // 全屏预览：返回 base64 JPEG
-  ipcMain.handle('photos:fullPreview', async (_, filePath: string, iccPath?: string) => {
-    const result = await renderFullPreview(filePath, iccPath)
+  ipcMain.handle('photos:fullPreview', async (_, filePath: string, iccPath?: string, rotation = 0) => {
+    const result = await renderFullPreview(filePath, iccPath, rotation)
     if (!result) return null
     return {
       dataUrl: `data:image/jpeg;base64,${result.buffer.toString('base64')}`,
       width: result.width,
       height: result.height
     }
+  })
+
+  ipcMain.handle('photos:setRotation', async (_, photoId: number, rotation: number) => {
+    const db = getDb()
+    const nextRotation = normalizeRotation(rotation)
+    const row = db
+      .prepare('SELECT file_path FROM photos WHERE id = ?')
+      .get(photoId) as { file_path: string } | undefined
+    if (!row) return null
+
+    db.prepare('UPDATE photos SET rotation = ? WHERE id = ?').run(nextRotation, photoId)
+    const thumbPath = await generateThumbnail(row.file_path, getThumbDir(), nextRotation)
+    if (thumbPath) {
+      db.prepare('UPDATE photos SET thumb_path = ?, thumb_ready = 1 WHERE id = ?').run(thumbPath, photoId)
+    }
+    return { id: photoId, rotation: nextRotation, thumbPath: thumbPath ?? null }
+  })
+
+  ipcMain.handle('photos:batchRotate', async (_, photoIds: number[], delta = 90) => {
+    const db = getDb()
+    const normalizedDelta = normalizeRotation(delta)
+    let updated = 0
+    for (const photoId of photoIds) {
+      const row = db
+        .prepare('SELECT file_path, rotation FROM photos WHERE id = ?')
+        .get(photoId) as { file_path: string; rotation?: number } | undefined
+      if (!row) continue
+      const nextRotation = normalizeRotation((row.rotation ?? 0) + normalizedDelta)
+      db.prepare('UPDATE photos SET rotation = ? WHERE id = ?').run(nextRotation, photoId)
+      const thumbPath = await generateThumbnail(row.file_path, getThumbDir(), nextRotation)
+      if (thumbPath) {
+        db.prepare('UPDATE photos SET thumb_path = ?, thumb_ready = 1 WHERE id = ?').run(thumbPath, photoId)
+      }
+      updated++
+    }
+    return { updated }
   })
 
   // 获取缩略图 base64（用于已有 thumb_path 的快速读取）
@@ -201,11 +319,12 @@ export function registerPhotosIpc(): void {
 
   // 移动到子库
   ipcMain.handle('photos:moveToSubLibrary', (_, photoIds: number[], subLibraryId: number | null) => {
-    const db = getDb()
-    const stmt = db.prepare('UPDATE photos SET sub_library_id = ? WHERE id = ?')
-    const tx = db.transaction(() => { photoIds.forEach((id) => stmt.run(subLibraryId, id)) })
-    tx()
-    return true
+    return movePhotosToSubLibrary(
+      getDb(),
+      path.join(getLibraryRoot(), 'files'),
+      photoIds,
+      subLibraryId
+    )
   })
 }
 

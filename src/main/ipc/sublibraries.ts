@@ -1,5 +1,12 @@
 import { ipcMain } from 'electron'
+import path from 'path'
 import { getDb } from '../db/index'
+import {
+  createSubLibrary,
+  deleteSubLibrary,
+  renameSubLibrary
+} from '../services/library-layout'
+import { getLibraryRoot } from './index'
 
 export function registerSubLibrariesIpc(): void {
   // 获取完整子库树
@@ -12,21 +19,12 @@ export function registerSubLibrariesIpc(): void {
 
   // 新建子库
   ipcMain.handle('sublib:create', (_, name: string, parentId?: number) => {
-    const db = getDb()
-    const maxOrder = (
-      db
-        .prepare('SELECT MAX(sort_order) as m FROM sub_libraries WHERE parent_id IS ?')
-        .get(parentId ?? null) as { m: number }
-    ).m ?? 0
-    const r = db
-      .prepare('INSERT INTO sub_libraries (name, parent_id, sort_order) VALUES (?, ?, ?)')
-      .run(name.trim(), parentId ?? null, maxOrder + 1)
-    return r.lastInsertRowid
+    return createSubLibrary(getDb(), getFilesRoot(), name, parentId)
   })
 
   // 重命名
   ipcMain.handle('sublib:rename', (_, id: number, name: string) => {
-    getDb().prepare('UPDATE sub_libraries SET name = ? WHERE id = ?').run(name.trim(), id)
+    renameSubLibrary(getDb(), getFilesRoot(), id, name)
     return true
   })
 
@@ -38,26 +36,46 @@ export function registerSubLibrariesIpc(): void {
 
   // 删除（将内部照片置为未分类）
   ipcMain.handle('sublib:delete', (_, id: number) => {
-    const db = getDb()
-    db.prepare('UPDATE photos SET sub_library_id = NULL WHERE sub_library_id = ?').run(id)
-    // 子子库也上移
-    db.prepare('UPDATE sub_libraries SET parent_id = NULL WHERE parent_id = ?').run(id)
-    db.prepare('DELETE FROM sub_libraries WHERE id = ?').run(id)
+    deleteSubLibrary(getDb(), getFilesRoot(), id)
     return true
   })
 
   // 获取子库下照片数
   ipcMain.handle('sublib:counts', () => {
-    const rows = getDb()
+    const db = getDb()
+    const directRows = db
       .prepare('SELECT sub_library_id, COUNT(*) as count FROM photos GROUP BY sub_library_id')
       .all() as { sub_library_id: number | null; count: number }[]
-    const map: Record<string, number> = { null: 0 }
-    rows.forEach((r) => { map[String(r.sub_library_id)] = r.count })
+    const map: Record<string, number> = { null: 0, __total: 0 }
+    directRows.forEach((r) => {
+      map[String(r.sub_library_id)] = r.count
+      map.__total += r.count
+    })
+
+    // 父库计数包含所有后代子库，避免“年份父库”看起来为空。
+    const nestedRows = db.prepare(`
+      WITH RECURSIVE descendants(root_id, id) AS (
+        SELECT id, id FROM sub_libraries
+        UNION ALL
+        SELECT descendants.root_id, child.id
+        FROM descendants
+        JOIN sub_libraries child ON child.parent_id = descendants.id
+      )
+      SELECT descendants.root_id AS sub_library_id, COUNT(photos.id) AS count
+      FROM descendants
+      LEFT JOIN photos ON photos.sub_library_id = descendants.id
+      GROUP BY descendants.root_id
+    `).all() as { sub_library_id: number; count: number }[]
+    nestedRows.forEach((row) => { map[String(row.sub_library_id)] = row.count })
     return map
   })
 }
 
-interface SubLibRow { id: number; name: string; description: string; parent_id: number | null; sort_order: number; created_at: string }
+function getFilesRoot(): string {
+  return path.join(getLibraryRoot(), 'files')
+}
+
+interface SubLibRow { id: number; name: string; description: string; parent_id: number | null; folder_name?: string | null; sort_order: number; created_at: string }
 interface SubLibNode extends SubLibRow { children: SubLibNode[] }
 
 function buildTree(rows: SubLibRow[]): SubLibNode[] {

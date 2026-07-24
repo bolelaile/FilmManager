@@ -23,9 +23,9 @@ export function registerLibraryIpc(): void {
   // 重新生成指定照片的缩略图
   ipcMain.handle('library:regenThumb', async (_, photoId: number) => {
     const db = getDb()
-    const row = db.prepare('SELECT file_path FROM photos WHERE id = ?').get(photoId) as { file_path: string } | undefined
+    const row = db.prepare('SELECT file_path, rotation FROM photos WHERE id = ?').get(photoId) as { file_path: string; rotation?: number } | undefined
     if (!row) return false
-    const thumbPath = await generateThumbnail(row.file_path, getThumbDir())
+    const thumbPath = await generateThumbnail(row.file_path, getThumbDir(), row.rotation ?? 0)
     if (thumbPath) {
       db.prepare('UPDATE photos SET thumb_path = ?, thumb_ready = 1 WHERE id = ?').run(thumbPath, photoId)
     }

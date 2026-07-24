@@ -4,16 +4,17 @@ import {
   ImportOutlined,
   SettingOutlined,
   SearchOutlined,
-  DeleteOutlined,
   FolderAddOutlined,
   EnvironmentOutlined,
   VideoCameraOutlined,
   CameraOutlined,
   AimOutlined,
-  EditOutlined,
   MinusOutlined,
   BorderOutlined,
-  CloseOutlined
+  CloseOutlined,
+  BlockOutlined,
+  AppstoreOutlined,
+  RollbackOutlined
 } from '@ant-design/icons'
 import { useStore } from '../../store'
 
@@ -21,21 +22,21 @@ const { Header } = Layout
 
 interface TopBarProps {
   onImport: () => void
-  onBatchDelete: () => void
-  onBatchEdit: () => void
   onCreateSubLib: () => void
   onOpenMap: () => void
   onOpenFilmLibrary: () => void
   onOpenCameraLibrary: () => void
   onOpenLensLibrary: () => void
+  onCreateRoll: () => void
   totalCount: number
 }
 
 export default function TopBar({
-  onImport, onBatchDelete, onBatchEdit, onCreateSubLib,
-  onOpenMap, onOpenFilmLibrary, onOpenCameraLibrary, onOpenLensLibrary, totalCount
+  onImport, onCreateSubLib,
+  onOpenMap, onOpenFilmLibrary, onOpenCameraLibrary, onOpenLensLibrary,
+  onCreateRoll, totalCount
 }: TopBarProps) {
-  const { filter, setFilter, thumbnailSize, setThumbnailSize, selectedIds, setSettingsOpen } = useStore()
+  const { filter, setFilter, thumbnailSize, setThumbnailSize, selectedIds, setSettingsOpen, viewMode, setViewMode, activeRoll, setActiveRoll } = useStore()
 
   const handleSearchChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -125,27 +126,42 @@ export default function TopBar({
           style={{ width: 190, background: '#262626', borderColor: '#333', color: '#fff' }}
         />
 
-        {selectedIds.size > 0 && (
-          <>
-            <Badge count={selectedIds.size} size="small">
-              <Tooltip title="删除所选">
-                <Button
-                  icon={<DeleteOutlined />}
-                  danger
-                  onClick={onBatchDelete}
-                  style={{ background: '#2a1515', borderColor: '#5c2020' }}
-                />
-              </Tooltip>
-            </Badge>
-            <Tooltip title="批量编辑属性">
+        {/* 卷内视图返回按钮 */}
+        {viewMode === 'photos' && activeRoll && (
+          <Tooltip title="返回卷视图">
+            <Button
+              icon={<RollbackOutlined />}
+              onClick={() => { setActiveRoll(null); setViewMode('rolls') }}
+              style={{ background: '#1f1f1f', borderColor: '#c8832a', color: '#c8832a' }}
+            />
+          </Tooltip>
+        )}
+
+        {selectedIds.size > 0 && viewMode !== 'rolls' && (
+          <Badge count={selectedIds.size} size="small">
+            <Tooltip title="将所选照片建立为胶卷卷">
               <Button
-                icon={<EditOutlined />}
-                onClick={onBatchEdit}
-                style={{ background: '#1f1f1f', borderColor: '#333', color: '#c8832a' }}
+                icon={<BlockOutlined />}
+                onClick={onCreateRoll}
+                style={{ background: '#1f1f1f', borderColor: '#c8832a', color: '#c8832a' }}
               />
             </Tooltip>
-          </>
+          </Badge>
         )}
+
+        {/* 视图模式切换：卷 / 单张 */}
+        <Segmented
+          options={[
+            { value: 'rolls', label: <Tooltip title="卷视图"><BlockOutlined /></Tooltip> },
+            { value: 'photos', label: <Tooltip title="照片视图"><AppstoreOutlined /></Tooltip> }
+          ]}
+          value={viewMode}
+          onChange={(v) => {
+            setViewMode(v as 'rolls' | 'photos')
+            if (v === 'rolls') setActiveRoll(null)
+          }}
+          style={{ background: '#262626' }}
+        />
 
         <Tooltip title="新建子库">
           <Button icon={<FolderAddOutlined />} onClick={onCreateSubLib} style={{ background: '#1f1f1f', borderColor: '#333', color: '#ccc' }} />

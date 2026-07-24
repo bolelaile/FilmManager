@@ -93,6 +93,7 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
   const selectedAttrsRef = useRef(selectedAttrs)
   const createRollEnabledRef = useRef(createRollEnabled)
   const singleRollNameRef = useRef(singleRollName)
+  const subLibIdRef = useRef(subLibId)
   useEffect(() => { subLibIdRef.current = subLibId }, [subLibId])
   useEffect(() => { selectedAttrsRef.current = selectedAttrs }, [selectedAttrs])
   useEffect(() => { createRollEnabledRef.current = createRollEnabled }, [createRollEnabled])

@@ -137,8 +137,9 @@ export default function SettingsModal({ open, onClose, onAttrChange }: SettingsM
       onCancel={onClose}
       footer={null}
       width={680}
+      mask={false}
       styles={{
-        content: { background: '#1a1a1a', border: '1px solid #252525' },
+        content: { background: '#1a1a1a', border: '1px solid #353535', boxShadow: '0 8px 40px rgba(0,0,0,0.85)' },
         header: { background: '#1a1a1a', borderBottom: '1px solid #252525' }
       }}
     >

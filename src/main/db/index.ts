@@ -113,6 +113,38 @@ function runMigrations(): void {
     CREATE INDEX IF NOT EXISTS idx_photo_locations_loc   ON photo_locations(location_id);
   `)
 
+  // 迁移：属性值别名表
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS attribute_value_aliases (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        value_id   INTEGER NOT NULL REFERENCES attribute_values(id) ON DELETE CASCADE,
+        alias      TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        UNIQUE(value_id, alias)
+      );
+      CREATE INDEX IF NOT EXISTS idx_aliases_value_id ON attribute_value_aliases(value_id);
+    `)
+  } catch {}
+
+  // 迁移：胶卷卷功能
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS rolls (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      name        TEXT NOT NULL,
+      sub_library_id INTEGER REFERENCES sub_libraries(id) ON DELETE SET NULL,
+      cover_photo_id INTEGER REFERENCES photos(id) ON DELETE SET NULL,
+      created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+    CREATE TABLE IF NOT EXISTS photo_rolls (
+      photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
+      roll_id  INTEGER NOT NULL REFERENCES rolls(id) ON DELETE CASCADE,
+      PRIMARY KEY (photo_id, roll_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_photo_rolls_photo ON photo_rolls(photo_id);
+    CREATE INDEX IF NOT EXISTS idx_photo_rolls_roll  ON photo_rolls(roll_id);
+  `)
+
   seedDefaultData()
   try {
     seedChinaLocations()

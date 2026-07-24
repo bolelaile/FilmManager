@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react'
-import { Modal, Button, Space, Input, Select, Divider, Popconfirm, Empty, Spin, message } from 'antd'
-import { PlusOutlined, DeleteOutlined, PictureOutlined } from '@ant-design/icons'
+import { Modal, Button, Space, Input, Select, Divider, Popconfirm, Empty, Spin, Tag, Tooltip, message } from 'antd'
+import { PlusOutlined, DeleteOutlined, PictureOutlined, ImportOutlined, TagsOutlined } from '@ant-design/icons'
 import type { AttributeType, AttributeValue } from '../../types'
 import { FilmIconImg } from '../FilmIcon'
 import { useStore } from '../../store'
@@ -19,6 +19,8 @@ interface FilmLibraryModalProps {
   onChanged: () => void
 }
 
+interface AliasItem { id: number; alias: string }
+
 export default function FilmLibraryModal({ open, attrTypes, onClose, onChanged }: FilmLibraryModalProps) {
   const { filmIconCache, mergeFilmIconCache } = useStore()
   const [filmValues, setFilmValues] = useState<AttributeValue[]>([])
@@ -33,6 +35,15 @@ export default function FilmLibraryModal({ open, attrTypes, onClose, onChanged }
   const [newIconUrl, setNewIconUrl] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
+  // alias management
+  const [aliasMap, setAliasMap] = useState<Record<number, AliasItem[]>>({})
+  const [expandedId, setExpandedId] = useState<number | null>(null)
+  const [aliasInput, setAliasInput] = useState('')
+  const [addingAlias, setAddingAlias] = useState(false)
+
+  // json import
+  const [importingJson, setImportingJson] = useState(false)
+
   const filmType = attrTypes.find((t) => t.key === 'film')
 
   const load = useCallback(async () => {
@@ -42,7 +53,6 @@ export default function FilmLibraryModal({ open, attrTypes, onClose, onChanged }
       const vals = await window.api.attrs.listValues(filmType.id) as AttributeValue[]
       setFilmValues(vals)
 
-      // load icon cache for all film values
       const needed = vals.filter((v) => v.icon_key && !filmIconCache[v.icon_key]).map((v) => v.icon_key!)
       if (needed.length > 0) {
         const batches: string[][] = []
@@ -53,7 +63,6 @@ export default function FilmLibraryModal({ open, attrTypes, onClose, onChanged }
         mergeFilmIconCache(merged)
       }
 
-      // get photo counts per film value
       const rawCounts = await window.api.attrs.valueCounts({}) as { attribute_type_id: number; attribute_value_id: number; count: number }[]
       const map: Record<number, number> = {}
       rawCounts
@@ -69,7 +78,6 @@ export default function FilmLibraryModal({ open, attrTypes, onClose, onChanged }
     if (open) load()
   }, [open, load])
 
-  // reset add form when closed
   useEffect(() => {
     if (!addOpen) {
       setNewName('')
@@ -78,6 +86,58 @@ export default function FilmLibraryModal({ open, attrTypes, onClose, onChanged }
       setNewIconUrl(null)
     }
   }, [addOpen])
+
+  useEffect(() => {
+    if (!open) {
+      setExpandedId(null)
+      setAliasMap({})
+      setAliasInput('')
+    }
+  }, [open])
+
+  const loadAliases = async (valueId: number) => {
+    const items = await window.api.attrs.listAliases(valueId) as AliasItem[]
+    setAliasMap((prev) => ({ ...prev, [valueId]: items }))
+  }
+
+  const handleToggleExpand = async (valueId: number) => {
+    if (expandedId === valueId) {
+      setExpandedId(null)
+      setAliasInput('')
+    } else {
+      setExpandedId(valueId)
+      setAliasInput('')
+      if (!aliasMap[valueId]) await loadAliases(valueId)
+    }
+  }
+
+  const handleAddAlias = async (valueId: number) => {
+    const text = aliasInput.trim()
+    if (!text) return
+    setAddingAlias(true)
+    try {
+      const newId = await window.api.attrs.addAlias(valueId, text) as number | null
+      if (newId) {
+        setAliasMap((prev) => ({
+          ...prev,
+          [valueId]: [...(prev[valueId] ?? []), { id: newId, alias: text }]
+        }))
+        setAliasInput('')
+      } else {
+        message.warning('该别名已存在')
+      }
+    } finally {
+      setAddingAlias(false)
+    }
+  }
+
+  const handleRemoveAlias = async (valueId: number, aliasId: number) => {
+    await window.api.attrs.removeAlias(aliasId)
+    setAliasMap((prev) => ({
+      ...prev,
+      [valueId]: (prev[valueId] ?? []).filter((a) => a.id !== aliasId)
+    }))
+  }
 
   const handleDelete = async (id: number) => {
     await window.api.attrs.deleteValue(id)
@@ -112,6 +172,24 @@ export default function FilmLibraryModal({ open, attrTypes, onClose, onChanged }
     }
   }
 
+  const handleImportJson = async () => {
+    if (!filmType) return
+    setImportingJson(true)
+    try {
+      const result = await window.api.attrs.importJson(filmType.id) as
+        | { added: number; updated: number; aliasesAdded: number }
+        | { error: string }
+        | null
+      if (!result) return
+      if ('error' in result) { message.error(result.error); return }
+      message.success(`导入完成：新增 ${result.added} 项，更新 ${result.updated} 项，别名 +${result.aliasesAdded}`)
+      onChanged()
+      load()
+    } finally {
+      setImportingJson(false)
+    }
+  }
+
   return (
     <>
       <Modal
@@ -119,21 +197,32 @@ export default function FilmLibraryModal({ open, attrTypes, onClose, onChanged }
         open={open}
         onCancel={onClose}
         footer={
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={() => setAddOpen(true)}
-            style={{ background: '#c8832a', borderColor: '#c8832a' }}
-          >
-            新增胶卷
-          </Button>
+          <Space>
+            <Button
+              icon={<ImportOutlined />}
+              loading={importingJson}
+              onClick={handleImportJson}
+              style={{ background: '#1a1a1a', borderColor: '#444', color: '#aaa' }}
+            >
+              导入 JSON
+            </Button>
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={() => setAddOpen(true)}
+              style={{ background: '#c8832a', borderColor: '#c8832a' }}
+            >
+              新增胶卷
+            </Button>
+          </Space>
         }
-        width={560}
+        width={580}
+        mask={false}
         styles={{
-          content: { background: '#1a1a1a', border: '1px solid #252525' },
+          content: { background: '#1a1a1a', border: '1px solid #353535', boxShadow: '0 8px 40px rgba(0,0,0,0.85)' },
           header: { background: '#1a1a1a', borderBottom: '1px solid #252525' },
           footer: { background: '#1a1a1a', borderTop: '1px solid #252525' },
-          body: { padding: '12px 16px', maxHeight: 460, overflowY: 'auto' }
+          body: { padding: '12px 16px', maxHeight: 500, overflowY: 'auto' }
         }}
       >
         {loading ? (
@@ -143,44 +232,86 @@ export default function FilmLibraryModal({ open, attrTypes, onClose, onChanged }
         ) : (
           filmValues.map((v) => {
             const iconUrl = v.icon_key ? filmIconCache[v.icon_key] : null
+            const isExpanded = expandedId === v.id
+            const aliases = aliasMap[v.id] ?? []
             return (
               <div
                 key={v.id}
                 style={{
-                  display: 'flex', alignItems: 'center', gap: 10,
-                  padding: '8px 10px', borderRadius: 6,
-                  background: '#111', border: '1px solid #222',
-                  marginBottom: 6
+                  borderRadius: 6, background: '#111',
+                  border: `1px solid ${isExpanded ? '#c8832a55' : '#222'}`,
+                  marginBottom: 6, overflow: 'hidden'
                 }}
               >
-                {/* icon */}
-                <div style={{ width: 40, height: 40, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 6, background: '#1e1e1e', overflow: 'hidden' }}>
-                  {iconUrl
-                    ? <img src={iconUrl} alt="" width={40} height={40} style={{ objectFit: 'cover', borderRadius: 6 }} />
-                    : <PictureOutlined style={{ color: '#444', fontSize: 18 }} />
-                  }
+                {/* Main row */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px' }}>
+                  <div style={{ width: 40, height: 40, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 6, background: '#1e1e1e', overflow: 'hidden' }}>
+                    {iconUrl
+                      ? <img src={iconUrl} alt="" width={40} height={40} style={{ objectFit: 'cover', borderRadius: 6 }} />
+                      : <PictureOutlined style={{ color: '#444', fontSize: 18 }} />
+                    }
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ color: '#ddd', fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.value}</div>
+                    <div style={{ color: '#555', fontSize: 11, marginTop: 1 }}>{counts[v.id] ?? 0} 张照片</div>
+                  </div>
+                  {/* Alias toggle */}
+                  <Tooltip title={isExpanded ? '收起别名' : '编辑别名'}>
+                    <Button
+                      size="small" type="text"
+                      icon={<TagsOutlined />}
+                      onClick={() => handleToggleExpand(v.id)}
+                      style={{ color: isExpanded ? '#c8832a' : '#555' }}
+                    />
+                  </Tooltip>
+                  {/* Delete */}
+                  <Popconfirm
+                    title="删除胶卷类型？"
+                    description="照片中的该属性将被清除"
+                    onConfirm={() => handleDelete(v.id)}
+                    okText="删除" cancelText="取消"
+                    okButtonProps={{ danger: true }}
+                  >
+                    <Button size="small" type="text" icon={<DeleteOutlined />} style={{ color: '#555' }} />
+                  </Popconfirm>
                 </div>
-                {/* name + count */}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ color: '#ddd', fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.value}</div>
-                  <div style={{ color: '#555', fontSize: 11, marginTop: 1 }}>{counts[v.id] ?? 0} 张照片</div>
-                </div>
-                {/* delete */}
-                <Popconfirm
-                  title="删除胶卷类型？"
-                  description="照片中的该属性将被清除"
-                  onConfirm={() => handleDelete(v.id)}
-                  okText="删除"
-                  cancelText="取消"
-                  okButtonProps={{ danger: true }}
-                >
-                  <Button
-                    size="small"
-                    type="text"
-                    icon={<DeleteOutlined />}
-                    style={{ color: '#555' }}
-                  />
-                </Popconfirm>
+
+                {/* Alias editor (expanded) */}
+                {isExpanded && (
+                  <div style={{ padding: '6px 10px 10px', borderTop: '1px solid #1e1e1e' }}>
+                    <div style={{ fontSize: 11, color: '#666', marginBottom: 6 }}>
+                      别名用于文件夹名称匹配（如中文名、缩写）
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: aliases.length > 0 ? 8 : 0 }}>
+                      {aliases.map((a) => (
+                        <Tag
+                          key={a.id}
+                          closable
+                          onClose={() => handleRemoveAlias(v.id, a.id)}
+                          style={{ background: '#1e1e1e', borderColor: '#c8832a55', color: '#c8832a', fontSize: 11 }}
+                        >
+                          {a.alias}
+                        </Tag>
+                      ))}
+                    </div>
+                    <Space.Compact size="small" style={{ width: '100%' }}>
+                      <Input
+                        placeholder="添加别名（如：柯达Portra400）"
+                        value={aliasInput}
+                        onChange={(e) => setAliasInput(e.target.value)}
+                        onPressEnter={() => handleAddAlias(v.id)}
+                        style={{ background: '#1e1e1e', borderColor: '#2a2a2a', color: '#ccc', fontSize: 12 }}
+                      />
+                      <Button
+                        icon={<PlusOutlined />}
+                        loading={addingAlias}
+                        disabled={!aliasInput.trim()}
+                        onClick={() => handleAddAlias(v.id)}
+                        style={{ background: '#c8832a', borderColor: '#c8832a', color: '#fff' }}
+                      />
+                    </Space.Compact>
+                  </div>
+                )}
               </div>
             )
           })
@@ -197,14 +328,14 @@ export default function FilmLibraryModal({ open, attrTypes, onClose, onChanged }
         cancelText="取消"
         okButtonProps={{ loading: saving, disabled: !newName.trim() || !newSpec, style: { background: '#c8832a', borderColor: '#c8832a' } }}
         width={420}
+        mask={false}
         styles={{
-          content: { background: '#1a1a1a', border: '1px solid #252525' },
+          content: { background: '#1a1a1a', border: '1px solid #353535', boxShadow: '0 8px 40px rgba(0,0,0,0.85)' },
           header: { background: '#1a1a1a', borderBottom: '1px solid #252525' },
           footer: { background: '#1a1a1a', borderTop: '1px solid #252525' }
         }}
       >
         <Space direction="vertical" style={{ width: '100%', marginTop: 8 }} size={12}>
-          {/* 名称 */}
           <div>
             <div style={{ color: '#888', fontSize: 12, marginBottom: 4 }}>胶卷名称 <span style={{ color: '#c8832a' }}>*</span></div>
             <Input
@@ -216,8 +347,6 @@ export default function FilmLibraryModal({ open, attrTypes, onClose, onChanged }
               style={{ background: '#222', borderColor: '#333', color: '#ccc' }}
             />
           </div>
-
-          {/* 规格 */}
           <div>
             <div style={{ color: '#888', fontSize: 12, marginBottom: 4 }}>胶卷规格 <span style={{ color: '#c8832a' }}>*</span></div>
             <Select
@@ -229,19 +358,12 @@ export default function FilmLibraryModal({ open, attrTypes, onClose, onChanged }
               styles={{ popup: { root: { background: '#1a1a1a' } } }}
             />
           </div>
-
-          {/* 图标（可选） */}
           <div>
             <div style={{ color: '#888', fontSize: 12, marginBottom: 6 }}>胶卷图标（可选）</div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <div
                 onClick={handlePickIcon}
-                style={{
-                  width: 56, height: 56, background: '#1e1e1e',
-                  border: '1px dashed #444', borderRadius: 8,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  cursor: 'pointer', flexShrink: 0, overflow: 'hidden'
-                }}
+                style={{ width: 56, height: 56, background: '#1e1e1e', border: '1px dashed #444', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0, overflow: 'hidden' }}
               >
                 {newIconUrl
                   ? <img src={newIconUrl} alt="" width={56} height={56} style={{ objectFit: 'cover' }} />
@@ -253,8 +375,7 @@ export default function FilmLibraryModal({ open, attrTypes, onClose, onChanged }
                   {newIconKey ? '更换图标' : '选择图标'}
                 </Button>
                 {newIconKey && (
-                  <Button size="small" type="text" onClick={() => { setNewIconKey(null); setNewIconUrl(null) }}
-                    style={{ color: '#666', padding: 0, fontSize: 11 }}>
+                  <Button size="small" type="text" onClick={() => { setNewIconKey(null); setNewIconUrl(null) }} style={{ color: '#666', padding: 0, fontSize: 11 }}>
                     移除图标
                   </Button>
                 )}

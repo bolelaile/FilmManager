@@ -4,6 +4,7 @@ import { registerAttributesIpc } from './attributes'
 import { registerSubLibrariesIpc } from './sublibraries'
 import { registerLibraryIpc } from './library'
 import { registerLocationsIpc } from './locations'
+import { registerRollsIpc } from './rolls'
 import path from 'path'
 import { app } from 'electron'
 import fs from 'fs'
@@ -30,4 +31,5 @@ export function initIpc(libRoot: string): void {
   registerSubLibrariesIpc()
   registerLibraryIpc()
   registerLocationsIpc()
+  registerRollsIpc()
 }

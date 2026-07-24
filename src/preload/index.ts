@@ -34,6 +34,8 @@ const api = {
   import: {
     selectAndImport: (options?: ImportOptions) => ipcRenderer.invoke('import:selectAndImport', options),
     importPaths: (paths: string[], options?: ImportOptions) => ipcRenderer.invoke('import:importPaths', paths, options),
+    scanFolders: () => ipcRenderer.invoke('import:scanFolders'),
+    importRolls: (configs: unknown[]) => ipcRenderer.invoke('import:importRolls', configs),
     onProgress: (cb: (data: { imported: number; skipped: number; total?: number }) => void) => {
       ipcRenderer.on('import:progress', (_, data) => cb(data))
       return () => ipcRenderer.removeAllListeners('import:progress')
@@ -60,7 +62,11 @@ const api = {
     filmIconsBatch: (keys: string[], size?: 64 | 128) => ipcRenderer.invoke('attrs:filmIconsBatch', keys, size),
     importCustomIcon: () => ipcRenderer.invoke('attrs:importCustomIcon'),
     deleteValue: (id: number) => ipcRenderer.invoke('attrs:deleteValue', id),
-    reorder: (ids: number[]) => ipcRenderer.invoke('attrs:reorder', ids)
+    reorder: (ids: number[]) => ipcRenderer.invoke('attrs:reorder', ids),
+    listAliases: (valueId: number) => ipcRenderer.invoke('attrs:listAliases', valueId),
+    addAlias: (valueId: number, alias: string) => ipcRenderer.invoke('attrs:addAlias', valueId, alias),
+    removeAlias: (aliasId: number) => ipcRenderer.invoke('attrs:removeAlias', aliasId),
+    importJson: (typeId: number) => ipcRenderer.invoke('attrs:importJson', typeId)
   },
   // 子库
   sublib: {
@@ -105,6 +111,18 @@ const api = {
     removeFromPhoto: (photoId: number, locationId: number) => ipcRenderer.invoke('locations:removeFromPhoto', photoId, locationId),
     search: (query: string) => ipcRenderer.invoke('locations:search', query),
     mapData: () => ipcRenderer.invoke('locations:mapData')
+  },
+  // 卷管理
+  rolls: {
+    list: (params?: unknown) => ipcRenderer.invoke('rolls:list', params),
+    create: (params: { photoIds: number[]; name?: string; subLibraryId?: number | null }) => ipcRenderer.invoke('rolls:create', params),
+    rename: (id: number, name: string) => ipcRenderer.invoke('rolls:rename', id, name),
+    delete: (id: number) => ipcRenderer.invoke('rolls:delete', id),
+    photos: (rollId: number | null, params: unknown) => ipcRenderer.invoke('rolls:photos', rollId, params),
+    forPhoto: (photoId: number) => ipcRenderer.invoke('rolls:forPhoto', photoId),
+    removePhotos: (rollId: number, photoIds: number[]) => ipcRenderer.invoke('rolls:removePhotos', rollId, photoIds),
+    addPhotos: (rollId: number, photoIds: number[]) => ipcRenderer.invoke('rolls:addPhotos', rollId, photoIds),
+    setCover: (rollId: number, photoId: number) => ipcRenderer.invoke('rolls:setCover', rollId, photoId)
   }
 }
 

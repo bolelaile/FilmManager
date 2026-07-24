@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { Layout, message, Modal, Input, Spin, Select } from 'antd'
 import { useStore } from '../store'
-import type { Photo, AttributeType, PhotoFilterOptions, SubLibrary } from '../types'
+import type { Photo, AttributeType, PhotoFilterOptions, SubLibrary, Roll } from '../types'
 import TopBar from '../components/Layout/TopBar'
 import FilterPanel from '../components/FilterPanel'
 import PhotoGrid from '../components/PhotoGrid'
@@ -13,6 +13,8 @@ import MapView from '../components/MapView'
 import FilmLibraryModal from '../components/FilmLibraryModal'
 import AttrLibraryModal from '../components/AttrLibraryModal'
 import BatchEditModal from '../components/BatchEditModal'
+import RollsView from '../components/RollsView'
+import CreateRollModal from '../components/CreateRollModal'
 
 const PAGE_SIZE = 80
 
@@ -30,7 +32,11 @@ export default function Library() {
     setSettingsOpen,
     detailPhotoId,
     setDetailPhotoId,
-    setIccProfiles
+    setIccProfiles,
+    viewMode,
+    setViewMode,
+    activeRoll,
+    setActiveRoll
   } = useStore()
 
   const [photos, setPhotos] = useState<Photo[]>([])
@@ -55,6 +61,13 @@ export default function Library() {
     fileTypes: [],
     statusCounts: { unclassified: 0, missing_date: 0, missing_camera: 0 }
   })
+  const [createRollOpen, setCreateRollOpen] = useState(false)
+
+  // Rolls state
+  const [rolls, setRolls] = useState<Roll[]>([])
+  const [photolessCount, setPhotolessCount] = useState(0)
+  const [rollsLoading, setRollsLoading] = useState(false)
+  const [unassignedOnly, setUnassignedOnly] = useState(false)
   const loadingRef = useRef(false)
 
   const loadAttrs = useCallback(async () => {
@@ -88,20 +101,39 @@ export default function Library() {
     setLoading(true)
     const currentPage = reset ? 1 : page
     try {
-      const result = await window.api.photos.list({
-        page: currentPage,
-        pageSize: PAGE_SIZE,
-        filters: filter.filters,
-        subLibraryId: filter.subLibraryId,
-        search: filter.search,
-        dateFrom: filter.dateFrom,
-        dateTo: filter.dateTo,
-        dateField: filter.dateField,
-        fileTypes: filter.fileTypes,
-        organizationStatuses: filter.organizationStatuses,
-        sortBy: filter.sortBy,
-        sortOrder: filter.sortOrder
-      }) as { total: number; rows: Photo[] }
+      // When in roll drill-down: load only that roll's photos
+      let result: { total: number; rows: Photo[] }
+      if (activeRoll || unassignedOnly) {
+        result = await window.api.rolls.photos(activeRoll?.id ?? null, {
+          page: currentPage,
+          pageSize: PAGE_SIZE,
+          filters: filter.filters,
+          subLibraryId: filter.subLibraryId,
+          search: filter.search,
+          dateFrom: filter.dateFrom,
+          dateTo: filter.dateTo,
+          dateField: filter.dateField,
+          fileTypes: filter.fileTypes,
+          organizationStatuses: filter.organizationStatuses,
+          sortBy: filter.sortBy,
+          sortOrder: filter.sortOrder
+        }) as { total: number; rows: Photo[] }
+      } else {
+        result = await window.api.photos.list({
+          page: currentPage,
+          pageSize: PAGE_SIZE,
+          filters: filter.filters,
+          subLibraryId: filter.subLibraryId,
+          search: filter.search,
+          dateFrom: filter.dateFrom,
+          dateTo: filter.dateTo,
+          dateField: filter.dateField,
+          fileTypes: filter.fileTypes,
+          organizationStatuses: filter.organizationStatuses,
+          sortBy: filter.sortBy,
+          sortOrder: filter.sortOrder
+        }) as { total: number; rows: Photo[] }
+      }
       if (reset) {
         setPhotos(result.rows)
         setPage(2)
@@ -118,20 +150,48 @@ export default function Library() {
       setLoading(false)
       loadingRef.current = false
     }
-  }, [filter, page])
+  }, [filter, page, activeRoll, unassignedOnly])
+
+  const loadRolls = useCallback(async () => {
+    setRollsLoading(true)
+    try {
+      const result = await window.api.rolls.list({
+        filters: filter.filters,
+        subLibraryId: filter.subLibraryId,
+        search: filter.search,
+        dateFrom: filter.dateFrom,
+        dateTo: filter.dateTo,
+        dateField: filter.dateField,
+        fileTypes: filter.fileTypes,
+        organizationStatuses: filter.organizationStatuses
+      }) as { rolls: Roll[]; photolessCount: number }
+      setRolls(result.rolls)
+      setPhotolessCount(result.photolessCount)
+    } catch (err) {
+      console.error('loadRolls failed:', err)
+    } finally {
+      setRollsLoading(false)
+    }
+  }, [filter])
 
   // 筛选条件变化时重置
   useEffect(() => {
     setPage(1)
-    loadPhotos(true)
-  }, [filter])
+    if (viewMode === 'rolls' && !activeRoll) {
+      loadRolls()
+    } else {
+      loadPhotos(true)
+    }
+  }, [filter, viewMode, activeRoll, unassignedOnly])
+
+  useEffect(() => {
+    if (viewMode === 'rolls') setUnassignedOnly(false)
+  }, [viewMode])
 
   useEffect(() => {
     loadAttrs()
     loadSubLibs()
-    // 加载 ICC 配置文件
     window.api.library.listProfiles().then((p) => setIccProfiles(p as never))
-    // 检查主进程初始化错误
     window.api.app.getInitError().then((err) => {
       if (err) message.error(`初始化错误: ${err}`, 10)
     }).catch(() => {})
@@ -156,6 +216,7 @@ export default function Library() {
         loadPhotos(true)
         loadAttrs()
         loadSubLibs()
+        loadRolls()
       }
     })
   }
@@ -197,6 +258,47 @@ export default function Library() {
     loadSubLibs()
   }
 
+  const handleRollClick = (roll: Roll) => {
+    setUnassignedOnly(false)
+    setActiveRoll(roll)
+    setViewMode('photos')
+    clearSelection()
+  }
+
+  const handleOtherPhotosClick = () => {
+    setUnassignedOnly(true)
+    setActiveRoll(null)
+    setViewMode('photos')
+    clearSelection()
+  }
+
+  // Determine what to show in main content area
+  const showRollsView = viewMode === 'rolls' && !activeRoll
+
+  // Title for breadcrumb when inside a roll
+  const rollBreadcrumb = activeRoll || unassignedOnly ? (
+    <div style={{
+      padding: '6px 16px',
+      background: '#1a1a1a',
+      borderBottom: '1px solid #252525',
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      fontSize: 13,
+      color: '#888',
+      flexShrink: 0
+    }}>
+      <span
+        style={{ color: '#c8832a', cursor: 'pointer' }}
+        onClick={() => { setActiveRoll(null); setUnassignedOnly(false); setViewMode('rolls') }}
+      >
+        卷视图
+      </span>
+      <span>/</span>
+      <span style={{ color: '#ccc' }}>{activeRoll?.name ?? '其他图片'}</span>
+      <span style={{ marginLeft: 'auto', color: '#555', fontSize: 11 }}>{total} 张</span>
+    </div>
+  ) : null
   return (
     <Layout style={{ height: '100vh', background: '#141414', overflow: 'hidden' }}>
       <TopBar
@@ -210,6 +312,7 @@ export default function Library() {
         onOpenFilmLibrary={() => setFilmLibraryOpen(true)}
         onOpenCameraLibrary={() => setCameraLibraryOpen(true)}
         onOpenLensLibrary={() => setLensLibraryOpen(true)}
+        onCreateRoll={() => setCreateRollOpen(true)}
         totalCount={total}
       />
 
@@ -223,15 +326,31 @@ export default function Library() {
         />
 
         <Layout.Content style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#141414' }}>
-          <PhotoGrid
-            photos={photos}
-            loading={loading}
-            hasMore={hasMore}
-            attrTypes={attrTypes}
-            onLoadMore={() => loadPhotos(false)}
-            onOpenViewer={handleOpenViewer}
-            onPhotoDeleted={() => { loadPhotos(true); loadAttrs(); loadSubLibs() }}
-          />
+          {/* Breadcrumb when inside a roll */}
+          {rollBreadcrumb}
+
+          {showRollsView ? (
+            <RollsView
+              rolls={rolls}
+              photolessCount={photolessCount}
+              loading={rollsLoading}
+              attrTypes={attrTypes}
+              onRollClick={handleRollClick}
+              onOtherPhotosClick={handleOtherPhotosClick}
+              onRollDeleted={() => loadRolls()}
+              onRollRenamed={() => loadRolls()}
+            />
+          ) : (
+            <PhotoGrid
+              photos={photos}
+              loading={loading}
+              hasMore={hasMore}
+              attrTypes={attrTypes}
+              onLoadMore={() => loadPhotos(false)}
+              onOpenViewer={handleOpenViewer}
+              onPhotoDeleted={() => { loadPhotos(true); loadAttrs(); loadSubLibs(); loadRolls() }}
+            />
+          )}
         </Layout.Content>
       </Layout>
 
@@ -251,7 +370,19 @@ export default function Library() {
       <ImportDialog
         open={importOpen}
         onClose={() => setImportOpen(false)}
-        onSuccess={() => { loadPhotos(true); loadAttrs(); loadSubLibs() }}
+        onSuccess={() => { loadPhotos(true); loadAttrs(); loadSubLibs(); loadRolls() }}
+      />
+
+      {/* 建卷对话框 */}
+      <CreateRollModal
+        open={createRollOpen}
+        selectedIds={[...selectedIds]}
+        onClose={() => setCreateRollOpen(false)}
+        onCreated={() => {
+          setCreateRollOpen(false)
+          clearSelection()
+          loadRolls()
+        }}
       />
 
       {/* 新建子库 */}
@@ -263,9 +394,10 @@ export default function Library() {
         okText="创建"
         cancelText="取消"
         styles={{
-          content: { background: '#1a1a1a', border: '1px solid #252525' },
+          content: { background: '#1a1a1a', border: '1px solid #353535', boxShadow: '0 8px 40px rgba(0,0,0,0.85)' },
           header: { background: '#1a1a1a', borderBottom: '1px solid #252525' }
         }}
+        mask={false}
       >
         <Input
           placeholder="子库名称"

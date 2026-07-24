@@ -1,6 +1,6 @@
 # FilmManager 产品规格文档
 
-**版本：** 1.1.0
+**版本：** 1.1.7
 **技术栈：** Electron 29 · React 18 · Ant Design 5 · better-sqlite3 · Sharp · electron-vite
 
 ---
@@ -23,7 +23,10 @@ FilmManager 是一款面向胶片摄影爱好者的本地桌面应用，用于�
 | `sub_libraries` | 虚拟子库（树形） | 数十个 |
 | `attribute_types` | 属性类别定义 | 约 7 个（可扩展） |
 | `attribute_values` | 各类别的可选值 | 数百个 |
+| `attribute_value_aliases` | 属性值别名（胶片、相机、镜头等） | 数百个 |
 | `photo_attributes` | 照片—属性值关联（多对多） | 与照片数量同量级 |
+| `rolls` | 胶卷卷及封面、所属子库 | 数十—数百个 |
+| `photo_rolls` | 照片—胶卷卷关联 | 与照片数量同量级 |
 | `locations` | 地点（含经纬度） | 数十—数百个 |
 | `photo_locations` | 照片—地点关联（多对多） | 与照片数量同量级 |
 | `color_profiles` | ICC/ICM 色彩配置文件 | 数个 |
@@ -602,6 +605,11 @@ AttributeType（类别）  →  AttributeValue（可选值）  →  photo_attrib
 | 1.0.3 | 查看器可靠关闭（Modal）、中文属性 search-to-create、查看器属性编辑侧栏、胶卷库管理页 |
 | 1.0.4 | 相机库/镜头库 AttrLibraryModal（补充实现） |
 | **1.1.0** | **EXIF 自动读取**（拍摄日期 + 相机型号匹配）· **子库照片数统计**显示于筛选面板 · **批量属性编辑** BatchEditModal · **相机库 + 镜头库**独立管理界面 |
+| 1.1.1 | 三档视图布局优化、自适应列数、合并自定义标题栏与工具栏 |
+| 1.1.2 | 所有 Modal 去除遮罩（mask=false），允许对话框打开时继续操作主窗口 |
+| **1.1.3** | **胶卷卷功能**：选照片建卷（rolls 表）、自动/手动命名、卷视图（RollsView）与照片视图切换、未分卷"其他图片"汇总；新增 `rolls` / `photo_rolls` 表与 rolls IPC 模块 |
+| **1.1.4** | **增强导入**：ImportDialog 新增"按子文件夹识别为卷"切换；启用后调用 `import:scanFolders` 枚举子目录并模糊匹配属性，逐行确认表格可编辑卷名/属性/地点/日期，确认后调用 `import:importRolls` 批量导入并自动建卷 |
+| **1.1.5** | **智能文件夹解析**：父子层级属性推断（父文件夹=相机或胶卷，子文件夹补充另一属性，双向兼容）；复合命名正则解析（`YYYYMMDD` / `YYYY-MM-DD` / `YYMM` 等 6 种日期格式自动提取为拍摄日期）；确认界面每个属性旁显示来源标注（↑父 / ↓子），便于用户核查 |
 
 ## 十、功能扩展建议（已实现）
 
@@ -616,6 +624,49 @@ AttributeType（类别）  →  AttributeValue（可选值）  →  photo_attrib
 
 - 导出功能：基于现有查询能力，可导出带元数据的 CSV 或 JSON
 - 标签云视图：基于 `valueCounts` 数据，按胶卷/相机型号汇聚展示
+
+## 十一、v1.1.3 新增功能：胶卷卷（Rolls）
+
+### 数据库
+
+新增两张表：
+
+```sql
+CREATE TABLE rolls (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL,
+  sub_library_id INTEGER REFERENCES sub_libraries(id) ON DELETE SET NULL,
+  cover_photo_id INTEGER REFERENCES photos(id) ON DELETE SET NULL,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+
+CREATE TABLE photo_rolls (
+  photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
+  roll_id  INTEGER NOT NULL REFERENCES rolls(id) ON DELETE CASCADE,
+  PRIMARY KEY (photo_id, roll_id)
+);
+```
+
+### IPC API（`src/main/ipc/rolls.ts`）
+
+| 频道 | 参数 | 说明 |
+|------|------|------|
+| `rolls:list` | `subLibraryId?` | 列出所有卷，返回 `{ rolls, photolessCount }` |
+| `rolls:create` | `{ photoIds, name?, subLibraryId? }` | 建卷；留空 name 则自动命名 |
+| `rolls:rename` | `id, name` | 重命名卷 |
+| `rolls:delete` | `id` | 删除卷（照片不受影响） |
+| `rolls:photos` | `rollId, params` | 分页查询卷内照片 |
+| `rolls:forPhoto` | `photoId` | 查询照片所属卷 |
+| `rolls:removePhotos` | `rollId, photoIds` | 从卷中移除照片 |
+| `rolls:addPhotos` | `rollId, photoIds` | 向卷中添加照片 |
+| `rolls:setCover` | `rollId, photoId` | 设置封面照片 |
+
+### 前端组件
+
+- **`RollsView`**：网格卡片展示所有卷，每卡显示封面缩略图、卷名、胶片类型/格式/地点、照片数，支持重命名和删除
+- **`CreateRollModal`**：输入卷名（可留空）后对所选照片建卷
+- **TopBar 视图切换**：`BlockOutlined` / `AppstoreOutlined` Segmented 控件切换卷视图与照片视图
+- **卷内照片视图**：点击卷卡片后切换到照片视图并限定在该卷范围，顶部面包屑显示当前卷名，`RollbackOutlined` 按钮返回卷视图
 - 多库支持：`app.setLibraryRoot()` 已预留接口，可扩展为多个库文件切换
 
 基于现有数据结构，以下功能可较低成本实现：
@@ -627,3 +678,57 @@ AttributeType（类别）  →  AttributeValue（可选值）  →  photo_attrib
 5. **EXIF 自动读取**：导入时通过 Sharp 读取 EXIF，自动填充拍摄时间 / 相机型号等字段
 6. **标签云视图**：基于 `valueCounts` 数据，按胶卷/相机型号汇聚展示
 7. **多库支持**：`app.setLibraryRoot()` 已预留接口，可扩展为多个库文件切换
+
+---
+
+## 十二、v1.1.4 新增功能：子文件夹批量导入为卷
+
+### 功能概述
+
+ImportDialog 新增"按子文件夹识别为卷"切换开关（`rollModeEnabled`）。
+
+- **关闭（默认）**：保持原有单批次导入流程，拖拽或选择文件夹后统一配置属性并导入。
+- **开启**：触发多步骤扫描 → 确认 → 导入流程，每个子文件夹对应一个候选卷。
+
+### 导入步骤（roll 模式）
+
+1. **扫描（scan）**：点击"选择根目录并扫描"按钮 → 调用 `import:scanFolders`
+   - 弹出系统文件夹选择对话框，选择包含子文件夹的根目录
+   - 后端枚举所有直接子目录，递归统计每目录内支持格式的文件数量
+   - 对每个子文件夹名称调用 `matchFolderName()` 进行模糊匹配（normalize + includes，按值长度降序，每类型取最长匹配）
+   - 返回 `{ rootPath, folders: FolderScanResult[], rootFileCount }`
+
+2. **确认（confirm）**：每个扫描到的子文件夹显示为一行可编辑配置：
+   - **卷名**：预填为文件夹名，可修改
+   - **胶片**：自动填入匹配到的 film 属性值，点击打开 FilmIconPicker
+   - **其他属性**（film_format / camera / lens）：各自 Select，自动预选匹配值
+   - **拍摄地点**：从已有地点列表中选择
+   - **拍摄日期**：DatePicker
+   - **建卷**：Switch（默认开），关闭则只导入照片不创建卷记录
+   - 文件数量显示为只读提示
+
+3. **导入（importing）**：调用 `import:importRolls(configs: RollImportConfig[])`
+   - 后端按顺序处理每个文件夹：`importFile` 逐个复制并写 DB、批量写属性/地点/日期、创建 roll 记录 + photo_rolls
+   - 实时发送 `import:progress` 事件，前端展示总进度条
+
+4. **完成（done）**：展示每卷导入/跳过数量汇总列表
+
+### 新增 IPC
+
+| 频道 | 参数 | 说明 |
+|------|------|------|
+| `import:scanFolders` | — | 弹出目录选择对话框，扫描并返回子文件夹列表与属性匹配结果 |
+| `import:importRolls` | `configs: RollImportConfig[]` | 按配置批量导入，返回 `{ results, totalImported, totalSkipped }` |
+
+### 模糊匹配算法
+
+```typescript
+function matchFolderName(folderName, allValues): AttrMatch[] {
+  // 1. 按值字符串长度降序排列（优先匹配更具体的值）
+  // 2. 对每种属性类型只取第一个匹配（seenTypes Set）
+  // 3. normalize = 去空格 + 小写
+  // 4. 匹配条件：folderNorm.includes(valueNorm) || valueNorm.includes(folderNorm)
+}
+```
+
+匹配的属性类型：`film`、`film_format`、`camera`、`lens`

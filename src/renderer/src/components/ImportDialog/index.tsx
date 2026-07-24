@@ -65,6 +65,8 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
   const [pendingPaths, setPendingPaths] = useState<string[]>([])
   const [selectedLocation, setSelectedLocation] = useState<Location | null>(null)
   const [shotDate, setShotDate] = useState<string | null>(null)
+  const [createRollEnabled, setCreateRollEnabled] = useState(false)
+  const [singleRollName, setSingleRollName] = useState('')
 
   // ── roll mode state ──
   const [scannedFolders, setScannedFolders] = useState<FolderScanResult[]>([])
@@ -86,8 +88,12 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
   const dragCounter = useRef(0)
   const subLibIdRef = useRef(subLibId)
   const selectedAttrsRef = useRef(selectedAttrs)
+  const createRollEnabledRef = useRef(createRollEnabled)
+  const singleRollNameRef = useRef(singleRollName)
   useEffect(() => { subLibIdRef.current = subLibId }, [subLibId])
   useEffect(() => { selectedAttrsRef.current = selectedAttrs }, [selectedAttrs])
+  useEffect(() => { createRollEnabledRef.current = createRollEnabled }, [createRollEnabled])
+  useEffect(() => { singleRollNameRef.current = singleRollName }, [singleRollName])
 
   // Reset on close
   useEffect(() => {
@@ -102,6 +108,8 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
       setScannedFolders([])
       setRowConfigs([])
       setDoneResults([])
+      setCreateRollEnabled(false)
+      setSingleRollName('')
       cleanupRef.current.forEach((fn) => fn())
       cleanupRef.current = []
     }
@@ -161,9 +169,18 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
       await window.api.photos.batchSetShotDate(ids, sd).catch(() => {})
     }
 
+    // 创建卷（单批次模式）
+    let rollResult: { rollName: string; imported: number; skipped: number } | null = null
+    if (ids.length > 0 && createRollEnabledRef.current) {
+      const rollName = singleRollNameRef.current.trim() || undefined
+      await window.api.rolls.create({ photoIds: ids, name: rollName, subLibraryId: subLibIdRef.current ?? null }).catch(() => {})
+      rollResult = { rollName: rollName || '本次导入', imported: result.imported, skipped: result.skipped }
+    }
+
     if (result.imported > 0 || result.skipped > 0) {
       setStep('done')
       setProgress((p) => ({ ...p, imported: result.imported, skipped: result.skipped }))
+      if (rollResult) setDoneResults([rollResult])
     } else {
       setStep('select')
     }
@@ -491,6 +508,41 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
                   <div style={{ color: '#888', fontSize: 12, marginBottom: 6 }}>导入到子库（可选）</div>
                   <Select style={{ width: '100%' }} value={subLibId} onChange={setSubLibId} options={subLibOptions as never} placeholder="选择子库..." />
                 </div>
+
+                {/* 建卷开关 */}
+                <div style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '8px 12px', background: createRollEnabled ? 'rgba(200,131,42,0.08)' : '#111',
+                  borderRadius: 8, border: `1px solid ${createRollEnabled ? '#c8832a' : '#222'}`,
+                  transition: 'all 0.2s'
+                }}>
+                  <div>
+                    <div style={{ color: createRollEnabled ? '#c8832a' : '#888', fontSize: 13, fontWeight: 500 }}>
+                      <BlockOutlined style={{ marginRight: 6 }} />将本次导入组成一个卷
+                    </div>
+                    <div style={{ color: '#555', fontSize: 11, marginTop: 2 }}>
+                      导入完成后自动将所有文件归入同一个卷
+                    </div>
+                  </div>
+                  <Switch
+                    checked={createRollEnabled}
+                    onChange={setCreateRollEnabled}
+                    style={{ marginLeft: 12, flexShrink: 0 }}
+                  />
+                </div>
+
+                {/* 卷名输入（仅在建卷开关打开时显示） */}
+                {createRollEnabled && (
+                  <div>
+                    <div style={{ color: '#888', fontSize: 12, marginBottom: 6 }}>卷名（可选，留空则自动生成）</div>
+                    <Input
+                      placeholder="如：2024年夏 · Kodak Portra 400"
+                      value={singleRollName}
+                      onChange={(e) => setSingleRollName(e.target.value)}
+                      style={{ background: '#222', borderColor: '#333', color: '#ccc' }}
+                    />
+                  </div>
+                )}
 
                 <Button type="primary" block size="large" icon={<FolderOpenOutlined />} onClick={handleImport} style={{ background: '#c8832a', borderColor: '#c8832a' }}>
                   {pendingPaths.length > 0 ? `导入已拖入的 ${pendingPaths.length} 个文件` : '选择文件夹并导入'}

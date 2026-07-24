@@ -304,10 +304,10 @@ export default function FilterPanel({ attrTypes, valueCounts, subLibCounts, filt
       {/* 属性筛选 */}
       <Collapse
         ghost
-        defaultActiveKey={attrTypes.filter((t) => t.is_system).map((t) => t.id)}
+        defaultActiveKey={attrTypes.filter((t) => t.is_system && t.key !== 'imported_at').map((t) => t.id)}
         style={{ flex: 1 }}
       >
-        {attrTypes.map((type) => {
+        {attrTypes.filter((type) => type.key !== 'imported_at').map((type) => {
           const selectedForType = filter.filters[type.id] ?? []
           const searchQuery = attrSearch[type.id] ?? ''
           const nq = normalize(searchQuery)

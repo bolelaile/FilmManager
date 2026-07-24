@@ -1,0 +1,114 @@
+[
+  {
+    "value": "Canon AE-1",
+    "aliases": ["佳能AE1", "AE-1", "CanonAE1"]
+  },
+  {
+    "value": "Canon AE-1 Program",
+    "aliases": ["佳能AE1P", "AE-1P", "AE1Program"]
+  },
+  {
+    "value": "Canon EOS 5D Mark III",
+    "aliases": ["佳能5D3", "5DIII", "5D Mark3", "Canon5D3"]
+  },
+  {
+    "value": "Canon EOS 5D Mark IV",
+    "aliases": ["佳能5D4", "5DIV", "5D Mark4", "Canon5D4"]
+  },
+  {
+    "value": "Canon F-1",
+    "aliases": ["佳能F1", "CanonF1"]
+  },
+  {
+    "value": "Nikon F3",
+    "aliases": ["尼康F3", "NikonF3", "Nikon-F3"]
+  },
+  {
+    "value": "Nikon FM2",
+    "aliases": ["尼康FM2", "NikonFM2", "Nikon-FM2"]
+  },
+  {
+    "value": "Nikon FE2",
+    "aliases": ["尼康FE2", "NikonFE2"]
+  },
+  {
+    "value": "Nikon FA",
+    "aliases": ["尼康FA", "NikonFA"]
+  },
+  {
+    "value": "Nikon F100",
+    "aliases": ["尼康F100", "NikonF100"]
+  },
+  {
+    "value": "Minolta X-700",
+    "aliases": ["美能达X700", "X-700", "MinoltaX700"]
+  },
+  {
+    "value": "Minolta X-570",
+    "aliases": ["美能达X570", "X-570", "MinoltaX570"]
+  },
+  {
+    "value": "Pentax K1000",
+    "aliases": ["宾得K1000", "PentaxK1000", "Pentax-K1000"]
+  },
+  {
+    "value": "Pentax ME Super",
+    "aliases": ["宾得MESuper", "ME-Super", "PentaxME"]
+  },
+  {
+    "value": "Olympus OM-1",
+    "aliases": ["奥林巴斯OM1", "OM-1", "OlympusOM1"]
+  },
+  {
+    "value": "Olympus OM-4",
+    "aliases": ["奥林巴斯OM4", "OM-4", "OlympusOM4"]
+  },
+  {
+    "value": "Leica M6",
+    "aliases": ["徕卡M6", "LeicaM6", "Leica-M6"]
+  },
+  {
+    "value": "Leica M7",
+    "aliases": ["徕卡M7", "LeicaM7"]
+  },
+  {
+    "value": "Leica M3",
+    "aliases": ["徕卡M3", "LeicaM3"]
+  },
+  {
+    "value": "Contax RTS II",
+    "aliases": ["康泰时RTSII", "ContaxRTS2", "RTSII"]
+  },
+  {
+    "value": "Contax G2",
+    "aliases": ["康泰时G2", "ContaxG2"]
+  },
+  {
+    "value": "Hasselblad 500C/M",
+    "aliases": ["哈苏500CM", "500CM", "Hasselblad500", "哈苏500"]
+  },
+  {
+    "value": "Hasselblad 503CW",
+    "aliases": ["哈苏503CW", "503CW", "Hasselblad503"]
+  },
+  {
+    "value": "Rolleiflex 2.8F",
+    "aliases": ["禄来2.8F", "Rolleiflex28F", "禄来双反"]
+  },
+  {
+    "value": "Mamiya RB67",
+    "aliases": ["玛米亚RB67", "RB67", "MamiyaRB67"]
+  },
+  {
+    "value": "Mamiya 7",
+    "aliases": ["玛米亚7", "Mamiya7"]
+  },
+  {
+    "value": "Fujifilm GW690",
+    "aliases": ["富士GW690", "GW690", "德州徕卡"]
+  },
+  {
+    "value": "Lomo LC-A",
+    "aliases": ["LomoLC-A", "LCA", "LC-A"]
+  }
+]

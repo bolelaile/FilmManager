@@ -157,6 +157,93 @@ FilmManager/
 
 ---
 
+## 预设数据导入（JSON 批量导入）
+
+胶卷库、相机库、镜头库均支持通过 JSON 文件批量导入或更新预设条目。在对应库的管理界面点击"**导入 JSON**"按钮即可选择文件。
+
+### 模板文件位置
+
+| 文件 | 说明 |
+|------|------|
+| [`resources/presets/films.json`](resources/presets/films.json) | 胶卷预设模板（含主流135/120胶卷，含别名与内置图标键） |
+| [`resources/presets/cameras.json`](resources/presets/cameras.json) | 相机型号预设模板（含主流胶片相机，含中英文别名） |
+
+### JSON 格式规范
+
+#### 胶卷（导入到胶卷库）
+
+```json
+[
+  {
+    "value": "Kodak Portra 400 [135 / 35mm]",
+    "icon_key": "kodak_portra_400",
+    "aliases": ["柯达Portra400", "Portra400", "KP400"]
+  }
+]
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `value` | string | ✅ | 胶卷全名，建议格式：`品牌 型号 [规格]`，规格可选 `135 / 35mm` · `120 中画幅` · `4×5 大画幅` · `8×10 大画幅` |
+| `icon_key` | string | ❌ | 内置图标键名（见下方图标键列表），留空则无图标 |
+| `aliases` | string[] | ❌ | 别名列表，用于文件夹名称模糊匹配（如中文名、缩写、不同拼写方式） |
+
+#### 相机 / 镜头（导入到相机库或镜头库）
+
+```json
+[
+  {
+    "value": "Nikon FM2",
+    "aliases": ["尼康FM2", "NikonFM2", "Nikon-FM2"]
+  }
+]
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `value` | string | ✅ | 型号全名 |
+| `aliases` | string[] | ❌ | 别名列表（建议同时写中文名和英文缩写） |
+
+> **导入规则**：`value` 已存在则**合并更新**（追加新别名、更新图标键）；不存在则**新增**。重复运行同一文件是幂等的。
+
+### 内置图标键（`icon_key`）参考
+
+以下键名可直接用于 `icon_key` 字段，对应 `resources/film-icons/` 目录中的内置图标：
+
+<details>
+<summary>点击展开完整图标键列表</summary>
+
+**柯达 Kodak**
+`kodak_portra_400` · `kodak_portra_160` · `kodak_portra_800` · `kodak_ektar100` · `kodak_ektar25` · `kodak_ultramax400` · `kodak_gold_200` · `kodak_proimage100` · `kodaktmax100` · `kodaktmax400` · `kodaktmaxp3200` · `kodak_tri-x_400` · `kodak_e100` · `kodak_ektachrome_100` · `kodak_ektachrome_64t` · `kodak_ektachrome_64x` · `kodachrome` · `kodak_cp_200`
+
+**伊尔福 Ilford**
+`ilford_hp5` · `ilford_fp4` · `ilford_delta_100` · `ilford_delta_400` · `ilford_delta_3200` · `ilford_xp2` · `ilford_sfx` · `ilford_ortho` · `ilford_pan100` · `ilford_pan400` · `ilford_vivd400` · `ilford_ilfocolor` · `ilford_ilfochrome100`
+
+**肯特米尔 Kentmere**
+`kentmere_pan100` · `kentmere_pan200` · `kentmere_pan400`
+
+**乐凯 Lucky**
+`lucky_c200` · `lucky_shd100` · `lucky_shd400`
+
+**禄来 Rollei**
+`rollei_infrared` · `rollei_retro400s` · `rollei_rpx25` · `rollei_rpx100` · `rollei_rpx400` · `rollei_blackbird`
+
+**柯尼卡 Konica**
+`konica_cn_200` · `konica_centuria400` · `konica_vx400` · `konica_pan100` · `konica_业务100` · `konica_jx100` · `konica_lv100` · `konica_r100` · `konica_sr1600` · `konica_infrared750`
+
+**沃格 Woogo**
+`woogo_100d` · `woogo_320t` · `woogo_400d` · `woogo_800t` · `woogo_b_w400`
+
+**哈曼 Harman**
+`harman_phoenix_200_二代` · `harman_red`
+
+**其他**
+`orwo_np_100` · `orwo_dn21` · `orwo_nc_400` · `orwo_nc_500` · `orwo_p400` · `orwo_pf2` · `orwo_un54` · `rollei_infrared` · `perutz_color400` · `perutz_image160` · `retro_80` · `yashica_400` · `yashica_ruby_60s` · `sunny_100` · `shenguang_400` · `super_jcolor100` · `vibe_400_18exp` · `vibe_800_18exp` · `vibe_quality_max100` · `vibe_quality_max400` · `vibe_quality_max800` · `vibe_quality_b_w400`
+
+</details>
+
+---
+
 ## 支持的文件格式
 
 | 类型 | 格式 |

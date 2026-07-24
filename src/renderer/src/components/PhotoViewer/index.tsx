@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
-import { Spin, Button, Select, Divider, DatePicker, Input, message, Modal } from 'antd'
-import { FolderOpenOutlined, PlusOutlined, PictureOutlined } from '@ant-design/icons'
+import { Spin, Button, Select, Divider, DatePicker, Input, message, Modal, Tooltip } from 'antd'
+import { FolderOpenOutlined, PlusOutlined, PictureOutlined, RotateRightOutlined } from '@ant-design/icons'
 import { useStore } from '../../store'
 import type { Photo, IccProfile, AttributeType, AttributeValue } from '../../types'
 import { FilmTag, FilmIconPicker } from '../FilmIcon'
@@ -255,7 +255,7 @@ export default function PhotoViewer({ attrTypes, onAttrChanged }: PhotoViewerPro
     setPreviewUrl(null)
     setHistogram(null)
     try {
-      const result = await window.api.photos.fullPreview(p.file_path, profile?.path)
+      const result = await window.api.photos.fullPreview(p.file_path, profile?.path, p.rotation ?? 0)
       if (result) {
         setPreviewUrl(result.dataUrl)
         setImgSize({ w: result.width, h: result.height })
@@ -271,7 +271,7 @@ export default function PhotoViewer({ attrTypes, onAttrChanged }: PhotoViewerPro
       setScale(1)
       setPan({ x: 0, y: 0 })
     }
-  }, [basePhoto?.id, activeProfile?.path])
+  }, [basePhoto?.id, basePhoto?.rotation, activeProfile?.path])
 
   const handlePrev = useCallback(() => {
     if (viewerIndex > 0) setViewerIndex(viewerIndex - 1)
@@ -341,6 +341,17 @@ export default function PhotoViewer({ attrTypes, onAttrChanged }: PhotoViewerPro
     onAttrChanged?.()
   }
 
+  const handleRotate = async () => {
+    if (!basePhoto) return
+    const currentRotation = photo?.rotation ?? basePhoto.rotation ?? 0
+    const nextRotation = ((currentRotation + 90) % 360) as 0 | 90 | 180 | 270
+    const result = await window.api.photos.setRotation(basePhoto.id, nextRotation) as { rotation: number } | null
+    const updated = { ...(photo ?? basePhoto), rotation: (result?.rotation ?? nextRotation) as 0 | 90 | 180 | 270 }
+    setLivePhoto(updated)
+    await loadPreview(updated, activeProfile)
+    onAttrChanged?.()
+  }
+
   const navBtn = (onClick: () => void, disabled: boolean, label: string) => (
     <button
       onClick={onClick}
@@ -372,7 +383,6 @@ export default function PhotoViewer({ attrTypes, onAttrChanged }: PhotoViewerPro
       width="calc(100vw - 48px)"
       style={{ top: 20, padding: 0 }}
       mask={false}
-      draggable
       styles={{
         content: { background: '#111', padding: 0, border: '1px solid #353535', borderRadius: 8, overflow: 'hidden', boxShadow: '0 8px 40px rgba(0,0,0,0.85)' },
         header: { background: '#111', borderBottom: '1px solid #1f1f1f', padding: '0 52px 0 16px', margin: 0, height: 52, display: 'flex', alignItems: 'center' },
@@ -386,6 +396,14 @@ export default function PhotoViewer({ attrTypes, onAttrChanged }: PhotoViewerPro
             {scale !== 1 && <span style={{ color: '#c8832a', marginLeft: 10, fontSize: 11 }}>{Math.round(scale * 100)}%</span>}
           </span>
           <span style={{ color: '#555', fontSize: 12 }}>{viewerIndex + 1} / {viewerPhotos.length}</span>
+          <Tooltip title="顺时针旋转 90°">
+            <Button
+              size="small"
+              icon={<RotateRightOutlined />}
+              onClick={(e) => { e.stopPropagation(); handleRotate() }}
+              style={{ background: '#1f1f1f', borderColor: '#333', color: '#c8832a' }}
+            />
+          </Tooltip>
           <Button size="small" icon={<FolderOpenOutlined />} onClick={(e) => { e.stopPropagation(); window.api.library.revealFile(basePhoto.file_path) }}
             style={{ background: '#1f1f1f', borderColor: '#333', color: '#ccc' }} />
         </div>
@@ -470,6 +488,7 @@ export default function PhotoViewer({ attrTypes, onAttrChanged }: PhotoViewerPro
               <SectionLabel>文件信息</SectionLabel>
               <MetaRow label="文件名" value={basePhoto.original_name} />
               <MetaRow label="格式" value={basePhoto.file_type.toUpperCase()} />
+              <MetaRow label="旋转" value={`${photo?.rotation ?? basePhoto.rotation ?? 0}°`} />
               {imgSize && <MetaRow label="尺寸" value={`${imgSize.w} × ${imgSize.h}`} />}
               {basePhoto.file_size != null && <MetaRow label="大小" value={formatSize(basePhoto.file_size)} />}
               {/* Shot date — editable */}

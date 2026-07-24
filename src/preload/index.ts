@@ -1,9 +1,22 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
+export type AutoOrganizeMode = 'none' | 'year' | 'year-month' | 'camera' | 'film' | 'source-folder'
+
+export interface ImportOptions {
+  subLibraryId?: number
+  organizeBy?: AutoOrganizeMode
+  shotDate?: string | null
+  filmName?: string | null
+  cameraName?: string | null
+  lensName?: string | null
+  autoCreateEquipment?: boolean
+}
+
 const api = {
   // 照片
   photos: {
     list: (params: unknown) => ipcRenderer.invoke('photos:list', params),
+    filterOptions: () => ipcRenderer.invoke('photos:filterOptions'),
     get: (id: number) => ipcRenderer.invoke('photos:get', id),
     setAttributes: (photoId: number, attrs: unknown[]) => ipcRenderer.invoke('photos:setAttributes', photoId, attrs),
     batchSetAttributes: (ids: number[], attrs: unknown[]) => ipcRenderer.invoke('photos:batchSetAttributes', ids, attrs),
@@ -11,14 +24,16 @@ const api = {
     setShotDate: (id: number, shotDate: string | null) => ipcRenderer.invoke('photos:setShotDate', id, shotDate),
     batchSetShotDate: (ids: number[], shotDate: string | null) => ipcRenderer.invoke('photos:batchSetShotDate', ids, shotDate),
     delete: (ids: number[], deleteFile: boolean) => ipcRenderer.invoke('photos:delete', ids, deleteFile),
-    fullPreview: (filePath: string, iccPath?: string) => ipcRenderer.invoke('photos:fullPreview', filePath, iccPath),
+    fullPreview: (filePath: string, iccPath?: string, rotation?: number) => ipcRenderer.invoke('photos:fullPreview', filePath, iccPath, rotation),
     thumbDataUrl: (thumbPath: string) => ipcRenderer.invoke('photos:thumbDataUrl', thumbPath),
-    moveToSubLibrary: (ids: number[], subLibId: number | null) => ipcRenderer.invoke('photos:moveToSubLibrary', ids, subLibId)
+    moveToSubLibrary: (ids: number[], subLibId: number | null) => ipcRenderer.invoke('photos:moveToSubLibrary', ids, subLibId),
+    setRotation: (id: number, rotation: number) => ipcRenderer.invoke('photos:setRotation', id, rotation),
+    batchRotate: (ids: number[], delta?: number) => ipcRenderer.invoke('photos:batchRotate', ids, delta)
   },
   // 导入
   import: {
-    selectAndImport: (subLibId?: number) => ipcRenderer.invoke('import:selectAndImport', subLibId),
-    importPaths: (paths: string[], subLibId?: number) => ipcRenderer.invoke('import:importPaths', paths, subLibId),
+    selectAndImport: (options?: ImportOptions) => ipcRenderer.invoke('import:selectAndImport', options),
+    importPaths: (paths: string[], options?: ImportOptions) => ipcRenderer.invoke('import:importPaths', paths, options),
     scanFolders: () => ipcRenderer.invoke('import:scanFolders'),
     importRolls: (configs: unknown[]) => ipcRenderer.invoke('import:importRolls', configs),
     onProgress: (cb: (data: { imported: number; skipped: number; total?: number }) => void) => {
@@ -105,12 +120,12 @@ const api = {
   },
   // 卷管理
   rolls: {
-    list: (params?: { subLibraryId?: number; filters?: Record<number, number[]> }) => ipcRenderer.invoke('rolls:list', params),
+    list: (params?: { subLibraryId?: number; filters?: Record<number, number[]>; search?: string; dateFrom?: string; dateTo?: string; dateField?: string; fileTypes?: string[]; organizationStatuses?: string[] }) => ipcRenderer.invoke('rolls:list', params),
     checkAttrConsistency: (photoIds: number[]) => ipcRenderer.invoke('rolls:checkAttrConsistency', photoIds),
     create: (params: { photoIds: number[]; name?: string; subLibraryId?: number | null }) => ipcRenderer.invoke('rolls:create', params),
     rename: (id: number, name: string) => ipcRenderer.invoke('rolls:rename', id, name),
     delete: (id: number) => ipcRenderer.invoke('rolls:delete', id),
-    photos: (rollId: number, params: unknown) => ipcRenderer.invoke('rolls:photos', rollId, params),
+    photos: (rollId: number | null, params: unknown) => ipcRenderer.invoke('rolls:photos', rollId, params),
     forPhoto: (photoId: number) => ipcRenderer.invoke('rolls:forPhoto', photoId),
     removePhotos: (rollId: number, photoIds: number[]) => ipcRenderer.invoke('rolls:removePhotos', rollId, photoIds),
     addPhotos: (rollId: number, photoIds: number[]) => ipcRenderer.invoke('rolls:addPhotos', rollId, photoIds),

@@ -4,13 +4,11 @@ import {
   ImportOutlined,
   SettingOutlined,
   SearchOutlined,
-  DeleteOutlined,
   FolderAddOutlined,
   EnvironmentOutlined,
   VideoCameraOutlined,
   CameraOutlined,
   AimOutlined,
-  EditOutlined,
   MinusOutlined,
   BorderOutlined,
   CloseOutlined,
@@ -24,8 +22,6 @@ const { Header } = Layout
 
 interface TopBarProps {
   onImport: () => void
-  onBatchDelete: () => void
-  onBatchEdit: () => void
   onCreateSubLib: () => void
   onOpenMap: () => void
   onOpenFilmLibrary: () => void
@@ -36,7 +32,7 @@ interface TopBarProps {
 }
 
 export default function TopBar({
-  onImport, onBatchDelete, onBatchEdit, onCreateSubLib,
+  onImport, onCreateSubLib,
   onOpenMap, onOpenFilmLibrary, onOpenCameraLibrary, onOpenLensLibrary,
   onCreateRoll, totalCount
 }: TopBarProps) {
@@ -135,41 +131,22 @@ export default function TopBar({
           <Tooltip title="返回卷视图">
             <Button
               icon={<RollbackOutlined />}
-              onClick={() => setActiveRoll(null)}
+              onClick={() => { setActiveRoll(null); setViewMode('rolls') }}
               style={{ background: '#1f1f1f', borderColor: '#c8832a', color: '#c8832a' }}
             />
           </Tooltip>
         )}
 
-        {selectedIds.size > 0 && (
-          <>
-            <Badge count={selectedIds.size} size="small">
-              <Tooltip title="删除所选">
-                <Button
-                  icon={<DeleteOutlined />}
-                  danger
-                  onClick={onBatchDelete}
-                  style={{ background: '#2a1515', borderColor: '#5c2020' }}
-                />
-              </Tooltip>
-            </Badge>
-            <Tooltip title="批量编辑属性">
+        {selectedIds.size > 0 && viewMode !== 'rolls' && (
+          <Badge count={selectedIds.size} size="small">
+            <Tooltip title="将所选照片建立为胶卷卷">
               <Button
-                icon={<EditOutlined />}
-                onClick={onBatchEdit}
-                style={{ background: '#1f1f1f', borderColor: '#333', color: '#c8832a' }}
+                icon={<BlockOutlined />}
+                onClick={onCreateRoll}
+                style={{ background: '#1f1f1f', borderColor: '#c8832a', color: '#c8832a' }}
               />
             </Tooltip>
-            {viewMode !== 'rolls' && (
-              <Tooltip title="建立胶卷卷">
-                <Button
-                  icon={<BlockOutlined />}
-                  onClick={onCreateRoll}
-                  style={{ background: '#1f1f1f', borderColor: '#c8832a', color: '#c8832a' }}
-                />
-              </Tooltip>
-            )}
-          </>
+          </Badge>
         )}
 
         {/* 视图模式切换：卷 / 单张 */}

@@ -27,6 +27,7 @@ function runMigrations(): void {
       name        TEXT NOT NULL,
       description TEXT DEFAULT '',
       parent_id   INTEGER REFERENCES sub_libraries(id) ON DELETE SET NULL,
+      folder_name TEXT,
       sort_order  INTEGER DEFAULT 0,
       created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
     );
@@ -43,6 +44,7 @@ function runMigrations(): void {
       file_size     INTEGER,
       sub_library_id INTEGER REFERENCES sub_libraries(id) ON DELETE SET NULL,
       imported_at   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+      rotation      INTEGER NOT NULL DEFAULT 0,
       notes         TEXT DEFAULT ''
     );
 
@@ -89,6 +91,12 @@ function runMigrations(): void {
 
   // 迁移：shot_date 字段（拍摄日期，可选，默认 NULL 表示用 imported_at）
   try { db.exec(`ALTER TABLE photos ADD COLUMN shot_date TEXT`) } catch {}
+
+  // 迁移：用户手动旋转角度（顺时针 0 / 90 / 180 / 270）
+  try { db.exec(`ALTER TABLE photos ADD COLUMN rotation INTEGER NOT NULL DEFAULT 0`) } catch {}
+
+  // 迁移：子库对应的本地物理目录名
+  try { db.exec(`ALTER TABLE sub_libraries ADD COLUMN folder_name TEXT`) } catch {}
 
   // 迁移：地点功能
   db.exec(`

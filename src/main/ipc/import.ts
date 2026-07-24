@@ -10,7 +10,24 @@ import {
   SUPPORTED_EXTENSIONS,
   getFileType
 } from '../services/thumbnail'
+import {
+  ensureSubLibraryDirectory,
+  ensureUniqueFilePath,
+  getOrCreateSubLibrary as getOrCreatePhysicalSubLibrary
+} from '../services/library-layout'
 import { getLibraryRoot, getThumbDir } from './index'
+
+export type AutoOrganizeMode = 'none' | 'year' | 'year-month' | 'camera' | 'film' | 'source-folder'
+
+export interface ImportOptions {
+  subLibraryId?: number
+  organizeBy?: AutoOrganizeMode
+  shotDate?: string | null
+  filmName?: string | null
+  cameraName?: string | null
+  lensName?: string | null
+  autoCreateEquipment?: boolean
+}
 
 // ── types ────────────────────────────────────────────────────────────────────
 
@@ -183,7 +200,7 @@ function buildRollName(
 
 export function registerImportIpc(): void {
   // ── 1. 打开文件夹选择对话框并导入（旧有，单批次） ──────────────────────────
-  ipcMain.handle('import:selectAndImport', async (event, subLibraryId?: number) => {
+  ipcMain.handle('import:selectAndImport', async (event, options: ImportOptions = {}) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     const result = await dialog.showOpenDialog(win!, {
       properties: ['openDirectory'],
@@ -192,11 +209,11 @@ export function registerImportIpc(): void {
     if (result.canceled || !result.filePaths[0]) return { imported: 0, skipped: 0, importedIds: [] }
 
     const folderPath = result.filePaths[0]
-    return importFolder(folderPath, subLibraryId, event)
+    return importFolder(folderPath, options, event)
   })
 
-  // ── 2. 拖拽 / 路径导入（单批次） ─────────────────────────────────────────
-  ipcMain.handle('import:importPaths', async (event, filePaths: string[], subLibraryId?: number) => {
+  // 拖拽 / 路径导入（支持文件和文件夹混合）
+  ipcMain.handle('import:importPaths', async (event, filePaths: string[], options: ImportOptions = {}) => {
     let imported = 0
     let skipped = 0
     const importedIds: number[] = []
@@ -216,7 +233,7 @@ export function registerImportIpc(): void {
 
     event.sender.send('import:total', allFiles.length)
     for (const filePath of allFiles) {
-      const photoId = await importFile(filePath, subLibraryId)
+      const photoId = await importFile(filePath, options)
       if (photoId !== null) {
         imported++
         importedIds.push(photoId)
@@ -337,9 +354,23 @@ export function registerImportIpc(): void {
       let imported = 0
       let skipped = 0
       const importedIds: number[] = []
+      const configuredAttrs = cfg.attrs.length > 0
+        ? db.prepare(`
+            SELECT at.key, av.value
+            FROM attribute_values av
+            JOIN attribute_types at ON at.id = av.attribute_type_id
+            WHERE av.id IN (${cfg.attrs.map(() => '?').join(',')})
+          `).all(...cfg.attrs.map((attr) => attr.valueId)) as { key: string; value: string }[]
+        : []
+      const importOptions: ImportOptions = {
+        subLibraryId: cfg.subLibraryId ?? undefined,
+        shotDate: cfg.shotDate ?? null,
+        cameraName: configuredAttrs.find((attr) => attr.key === 'camera')?.value ?? null,
+        lensName: configuredAttrs.find((attr) => attr.key === 'lens')?.value ?? null
+      }
 
       for (const filePath of files) {
-        const photoId = await importFile(filePath, cfg.subLibraryId ?? undefined)
+        const photoId = await importFile(filePath, importOptions)
         if (photoId !== null) {
           imported++
           globalImported++
@@ -358,11 +389,15 @@ export function registerImportIpc(): void {
       // Apply attributes
       if (importedIds.length > 0 && cfg.attrs.length > 0) {
         const insertAttr = db.prepare(
-          'INSERT OR REPLACE INTO photo_attributes (photo_id, attribute_type_id, attribute_value_id) VALUES (?, ?, ?)'
+          'INSERT OR IGNORE INTO photo_attributes (photo_id, attribute_type_id, attribute_value_id) VALUES (?, ?, ?)'
+        )
+        const deleteAttr = db.prepare(
+          'DELETE FROM photo_attributes WHERE photo_id = ? AND attribute_type_id = ?'
         )
         const tx = db.transaction(() => {
           for (const id of importedIds) {
             for (const attr of cfg.attrs) {
+              deleteAttr.run(id, attr.typeId)
               insertAttr.run(id, attr.typeId, attr.valueId)
             }
           }
@@ -437,7 +472,7 @@ function walkDirect(dir: string): string[] {
 
 async function importFolder(
   folderPath: string,
-  subLibraryId: number | undefined,
+  options: ImportOptions,
   event: Electron.IpcMainInvokeEvent
 ): Promise<{ imported: number; skipped: number; importedIds: number[] }> {
   let imported = 0
@@ -448,7 +483,7 @@ async function importFolder(
   event.sender.send('import:total', allFiles.length)
 
   for (const filePath of allFiles) {
-    const photoId = await importFile(filePath, subLibraryId)
+    const photoId = await importFile(filePath, options)
     if (photoId !== null) {
       imported++
       importedIds.push(photoId)
@@ -461,26 +496,29 @@ async function importFolder(
 }
 
 // 返回新插入的 photo id，若跳过则返回 null
-async function importFile(sourcePath: string, subLibraryId?: number): Promise<number | null> {
+async function importFile(sourcePath: string, options: ImportOptions): Promise<number | null> {
   const db = getDb()
   const libraryRoot = getLibraryRoot()
+  const filesRoot = path.join(libraryRoot, 'files')
   const thumbDir = getThumbDir()
-
-  const destPath = path.join(libraryRoot, 'files', path.basename(sourcePath))
-  const finalDest = ensureUniquePath(destPath)
+  let copiedPath: string | null = null
 
   try {
-    const existing = db.prepare('SELECT id FROM photos WHERE file_path = ?').get(finalDest)
-    if (existing) return null
-
-    fs.mkdirSync(path.dirname(finalDest), { recursive: true })
+    const meta = await getImageMeta(sourcePath)
+    const exif = await getExifData(sourcePath)
+    const effectiveShotDate = options.shotDate ?? exif.shotDate
+    const targetSubLibraryId = resolveTargetSubLibrary(
+      options,
+      sourcePath,
+      effectiveShotDate,
+      exif.cameraModel,
+      filesRoot
+    )
+    const targetDirectory = ensureSubLibraryDirectory(db, filesRoot, targetSubLibraryId)
+    const finalDest = ensureUniqueFilePath(path.join(targetDirectory, path.basename(sourcePath)))
     fs.copyFileSync(sourcePath, finalDest)
-
+    copiedPath = finalDest
     const stat = fs.statSync(finalDest)
-    const meta = await getImageMeta(finalDest)
-
-    // Read EXIF for shot_date and camera model
-    const exif = await getExifData(finalDest)
 
     const info = db
       .prepare(
@@ -494,33 +532,15 @@ async function importFile(sourcePath: string, subLibraryId?: number): Promise<nu
         meta?.width ?? null,
         meta?.height ?? null,
         stat.size,
-        subLibraryId ?? null,
-        exif.shotDate ?? null
+        targetSubLibraryId ?? null,
+        effectiveShotDate ?? null
       )
 
     const photoId = info.lastInsertRowid as number
 
-    // Auto-assign camera attribute from EXIF if matched
-    if (exif.cameraModel) {
-      try {
-        const cameraType = db.prepare("SELECT id FROM attribute_types WHERE key='camera'").get() as { id: number } | undefined
-        if (cameraType) {
-          const normModel = normalize(exif.cameraModel)
-          const cameraValues = db.prepare(
-            'SELECT id, value FROM attribute_values WHERE attribute_type_id = ?'
-          ).all(cameraType.id) as { id: number; value: string }[]
-          const match = cameraValues.find((v) => normalize(v.value) === normModel)
-            || cameraValues.find((v) => normModel.includes(normalize(v.value)) || normalize(v.value).includes(normModel))
-          if (match) {
-            db.prepare(
-              'INSERT OR IGNORE INTO photo_attributes (photo_id, attribute_type_id, attribute_value_id) VALUES (?, ?, ?)'
-            ).run(photoId, cameraType.id, match.id)
-          }
-        }
-      } catch (e) {
-        log.warn('EXIF camera match failed', e)
-      }
-    }
+    const autoCreateEquipment = options.autoCreateEquipment !== false
+    assignEquipmentAttribute(photoId, 'camera', options.cameraName ?? exif.cameraModel, autoCreateEquipment)
+    assignEquipmentAttribute(photoId, 'lens', options.lensName ?? exif.lensModel, autoCreateEquipment)
 
     // 后台生成缩略图
     generateThumbnail(finalDest, thumbDir).then((thumbPath) => {
@@ -531,16 +551,123 @@ async function importFile(sourcePath: string, subLibraryId?: number): Promise<nu
 
     return photoId
   } catch (err) {
+    if (copiedPath) {
+      const imported = db.prepare('SELECT id FROM photos WHERE file_path = ?').get(copiedPath)
+      if (!imported) {
+        try { fs.unlinkSync(copiedPath) } catch {}
+      }
+    }
     log.error('Import file failed', sourcePath, err)
     return null
   }
 }
 
-function ensureUniquePath(dest: string): string {
-  if (!fs.existsSync(dest)) return dest
-  const ext = path.extname(dest)
-  const base = dest.slice(0, -ext.length)
-  let i = 1
-  while (fs.existsSync(`${base}_${i}${ext}`)) i++
-  return `${base}_${i}${ext}`
+function normalizeEquipmentValue(value: string): string {
+  return value
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/\b(corporation|corp|company|co|limited|ltd)\b/g, '')
+    .replace(/[^a-z0-9\u4e00-\u9fff]+/g, '')
+}
+
+function findEquipmentValue(
+  values: { id: number; value: string }[],
+  model: string
+): { id: number; value: string } | undefined {
+  const modelKey = normalizeEquipmentValue(model)
+  const exact = values.find((value) => normalizeEquipmentValue(value.value) === modelKey)
+  if (exact) return exact
+
+  return values
+    .filter((value) => {
+      const valueKey = normalizeEquipmentValue(value.value)
+      return valueKey.length >= 4 && (modelKey.includes(valueKey) || valueKey.includes(modelKey))
+    })
+    .sort((a, b) => normalizeEquipmentValue(b.value).length - normalizeEquipmentValue(a.value).length)[0]
+}
+
+function assignEquipmentAttribute(
+  photoId: number,
+  typeKey: 'camera' | 'lens',
+  model: string | null,
+  autoCreate: boolean
+): void {
+  if (!model) return
+  try {
+    const db = getDb()
+    const attributeType = db
+      .prepare('SELECT id FROM attribute_types WHERE key = ?')
+      .get(typeKey) as { id: number } | undefined
+    if (!attributeType) return
+
+    const values = db
+      .prepare('SELECT id, value FROM attribute_values WHERE attribute_type_id = ?')
+      .all(attributeType.id) as { id: number; value: string }[]
+    const aliases = db.prepare(`
+      SELECT ava.value_id AS id, ava.alias AS value
+      FROM attribute_value_aliases ava
+      JOIN attribute_values av ON av.id = ava.value_id
+      WHERE av.attribute_type_id = ?
+    `).all(attributeType.id) as { id: number; value: string }[]
+    let value = findEquipmentValue(values, model) ?? findEquipmentValue(aliases, model)
+
+    if (!value && autoCreate) {
+      db.prepare(
+        'INSERT OR IGNORE INTO attribute_values (attribute_type_id, value, is_preset) VALUES (?, ?, 0)'
+      ).run(attributeType.id, model)
+      value = db
+        .prepare('SELECT id, value FROM attribute_values WHERE attribute_type_id = ? AND value = ? COLLATE NOCASE')
+        .get(attributeType.id, model) as { id: number; value: string } | undefined
+    }
+
+    if (value) {
+      db.prepare(
+        'INSERT OR IGNORE INTO photo_attributes (photo_id, attribute_type_id, attribute_value_id) VALUES (?, ?, ?)'
+      ).run(photoId, attributeType.id, value.id)
+    }
+  } catch (err) {
+    log.warn(`EXIF ${typeKey} match failed`, err)
+  }
+}
+
+function resolveTargetSubLibrary(
+  options: ImportOptions,
+  sourcePath: string,
+  shotDate: string | null,
+  cameraModel: string | null,
+  filesRoot: string
+): number | undefined {
+  const mode = options.organizeBy ?? 'none'
+  if (mode === 'none') return options.subLibraryId
+
+  let pathNames: string[]
+  switch (mode) {
+    case 'year':
+      pathNames = [shotDate?.slice(0, 4) || '日期未知']
+      break
+    case 'year-month':
+      pathNames = shotDate
+        ? [shotDate.slice(0, 4), shotDate.slice(0, 7)]
+        : ['日期未知']
+      break
+    case 'camera':
+      pathNames = [options.cameraName || cameraModel || '相机未知']
+      break
+    case 'film':
+      pathNames = [options.filmName || '胶片未指定']
+      break
+    case 'source-folder':
+      pathNames = [path.basename(path.dirname(sourcePath)) || '来源未知']
+      break
+  }
+
+  let parentId = options.subLibraryId
+  for (const rawName of pathNames) {
+    parentId = getOrCreatePhysicalSubLibrary(getDb(), filesRoot, sanitizeSubLibraryName(rawName), parentId)
+  }
+  return parentId
+}
+
+function sanitizeSubLibraryName(name: string): string {
+  return name.replace(/[\u0000-\u001f]/g, '').trim().slice(0, 100) || '未命名'
 }

@@ -1,8 +1,7 @@
-import React, { useRef, useEffect, useState, useCallback } from 'react'
+import React, { useRef, useEffect, useState } from 'react'
 import { Spin, Empty, Tooltip, Tag, Popconfirm, message } from 'antd'
-import { DeleteOutlined, EditOutlined, PictureOutlined, RollbackOutlined } from '@ant-design/icons'
+import { DeleteOutlined, EditOutlined, EnvironmentOutlined, PictureOutlined } from '@ant-design/icons'
 import type { Roll, AttributeType } from '../../types'
-import { useStore } from '../../store'
 import { FilmIconImg } from '../FilmIcon'
 
 const WIDE_THRESHOLD = 1400
@@ -284,7 +283,7 @@ function RollCard({
           )}
           {roll.location_name && (
             <span style={{ color: '#666', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 70 }}>
-              📍{roll.location_name}
+              <EnvironmentOutlined style={{ marginRight: 2 }} />{roll.location_name}
             </span>
           )}
         </div>

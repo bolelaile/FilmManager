@@ -24,6 +24,17 @@ interface AttrRow {
   icon_key?: string
 }
 
+interface RollQueryParams {
+  subLibraryId?: number
+  filters?: Record<number, number[]>
+  search?: string
+  dateFrom?: string
+  dateTo?: string
+  dateField?: 'imported_at' | 'shot_date'
+  fileTypes?: string[]
+  organizationStatuses?: ('unclassified' | 'missing_date' | 'missing_camera')[]
+}
+
 export function registerRollsIpc(): void {
   // 检查照片属性一致性（胶卷类型、相机型号）
   ipcMain.handle('rolls:checkAttrConsistency', (_, photoIds: number[]) => {
@@ -56,53 +67,100 @@ export function registerRollsIpc(): void {
   })
 
   // 列出所有卷（含每卷照片数、封面缩略图、属性摘要）
-  ipcMain.handle('rolls:list', (_, params?: { subLibraryId?: number; filters?: Record<number, number[]> } | number) => {
+  ipcMain.handle('rolls:list', (_, rawParams?: RollQueryParams | number) => {
     const db = getDb()
-    // 兼容旧签名（直接传 subLibraryId number）
-    let subLibraryId: number | undefined
-    let filters: Record<number, number[]> = {}
-    if (typeof params === 'number') {
-      subLibraryId = params
-    } else if (params && typeof params === 'object') {
-      subLibraryId = params.subLibraryId
-      filters = params.filters ?? {}
-    }
+    const params: RollQueryParams = typeof rawParams === 'number'
+      ? { subLibraryId: rawParams }
+      : rawParams ?? {}
+    const {
+      subLibraryId,
+      filters = {},
+      search,
+      dateFrom,
+      dateTo,
+      dateField = 'imported_at',
+      fileTypes = [],
+      organizationStatuses = []
+    } = params
+    const dateColumn = dateField === 'shot_date' ? 'member.shot_date' : 'member.imported_at'
 
     let sql = `
-      SELECT r.*, COUNT(pr.photo_id) as photo_count,
-             p.thumb_path, p.thumb_ready
+      SELECT r.*, COUNT(DISTINCT pr.photo_id) as photo_count,
+             cover.thumb_path, cover.thumb_ready
       FROM rolls r
       LEFT JOIN photo_rolls pr ON pr.roll_id = r.id
-      LEFT JOIN photos p ON p.id = r.cover_photo_id
+      LEFT JOIN photos member ON member.id = pr.photo_id
+      LEFT JOIN photos cover ON cover.id = r.cover_photo_id
     `
     const args: unknown[] = []
-    const wheres: string[] = []
+    let joinIdx = 0
+    let hasPhotoFilters = false
+    for (const [typeId, valueIds] of Object.entries(filters)) {
+      if (!valueIds || valueIds.length === 0) continue
+      const alias = `roll_pa${joinIdx++}`
+      sql += ` JOIN photo_attributes ${alias} ON ${alias}.photo_id = member.id AND ${alias}.attribute_type_id = ${typeId} AND ${alias}.attribute_value_id IN (${valueIds.map(() => '?').join(',')})`
+      args.push(...valueIds)
+      hasPhotoFilters = true
+    }
 
+    const wheres: string[] = []
     if (subLibraryId != null) {
-      wheres.push('r.sub_library_id = ?')
+      wheres.push(`r.sub_library_id IN (
+        WITH RECURSIVE descendants(id) AS (
+          SELECT ?
+          UNION ALL
+          SELECT child.id
+          FROM sub_libraries child
+          JOIN descendants parent ON child.parent_id = parent.id
+        )
+        SELECT id FROM descendants
+      )`)
       args.push(subLibraryId)
     }
-
-    // 属性过滤：每个类型至少有一张照片包含指定属性值
-    for (const [typeId, valueIds] of Object.entries(filters)) {
-      if (!valueIds || (valueIds as number[]).length === 0) continue
-      const valPh = (valueIds as number[]).map(() => '?').join(',')
-      wheres.push(`EXISTS (
-        SELECT 1 FROM photo_rolls pr2
-        JOIN photo_attributes pa ON pa.photo_id = pr2.photo_id
-        WHERE pr2.roll_id = r.id AND pa.attribute_type_id = ${typeId}
-          AND pa.attribute_value_id IN (${valPh})
-      )`)
-      args.push(...(valueIds as number[]))
+    if (search) {
+      wheres.push('member.original_name LIKE ?')
+      args.push(`%${search}%`)
+      hasPhotoFilters = true
     }
-
+    if (dateFrom) {
+      wheres.push(`${dateColumn} >= ?`)
+      args.push(dateFrom)
+      hasPhotoFilters = true
+    }
+    if (dateTo) {
+      wheres.push(`${dateColumn} <= ?`)
+      args.push(dateField === 'shot_date' ? dateTo : dateTo + ' 23:59:59')
+      hasPhotoFilters = true
+    }
+    if (fileTypes.length > 0) {
+      wheres.push(`member.file_type IN (${fileTypes.map(() => '?').join(',')})`)
+      args.push(...fileTypes)
+      hasPhotoFilters = true
+    }
+    if (organizationStatuses.includes('unclassified')) {
+      wheres.push('member.sub_library_id IS NULL')
+      hasPhotoFilters = true
+    }
+    if (organizationStatuses.includes('missing_date')) {
+      wheres.push("(member.shot_date IS NULL OR member.shot_date = '')")
+      hasPhotoFilters = true
+    }
+    if (organizationStatuses.includes('missing_camera')) {
+      wheres.push(`NOT EXISTS (
+        SELECT 1 FROM photo_attributes status_pa
+        JOIN attribute_types status_at ON status_at.id = status_pa.attribute_type_id
+        WHERE status_pa.photo_id = member.id AND status_at.key = 'camera'
+      )`)
+      hasPhotoFilters = true
+    }
+    if (hasPhotoFilters) wheres.push('member.id IS NOT NULL')
     if (wheres.length > 0) sql += ' WHERE ' + wheres.join(' AND ')
     sql += ' GROUP BY r.id ORDER BY r.created_at DESC'
     const rolls = db.prepare(sql).all(...args) as RollRow[]
 
     // 为每个卷查询属性摘要（取第一张照片的属性聚合）
     const rollIds = rolls.map((r) => r.id)
-    if (rollIds.length === 0) return { rolls: [], photolessCount: getPhotolessCount(db, subLibraryId) }
+    if (rollIds.length === 0) return { rolls: [], photolessCount: getPhotolessCount(db, params) }
 
     // 批量查询每个卷里所有照片的属性（去重聚合）
     const attrRows = db.prepare(`
@@ -148,7 +206,7 @@ export function registerRollsIpc(): void {
       location_name: locMap.get(r.id) ?? null
     }))
 
-    return { rolls: result, photolessCount: getPhotolessCount(db, subLibraryId) }
+    return { rolls: result, photolessCount: getPhotolessCount(db, params) }
   })
 
   // 创建卷
@@ -233,21 +291,52 @@ export function registerRollsIpc(): void {
   })
 
   // 获取卷内照片
-  ipcMain.handle('rolls:photos', (_, rollId: number, params: {
+  ipcMain.handle('rolls:photos', (_, rollId: number | null, params: {
     page: number
     pageSize: number
     filters?: Record<number, number[]>
+    subLibraryId?: number
     search?: string
-    sortBy?: 'imported_at' | 'file_name'
+    dateFrom?: string
+    dateTo?: string
+    dateField?: 'imported_at' | 'shot_date'
+    fileTypes?: string[]
+    organizationStatuses?: ('unclassified' | 'missing_date' | 'missing_camera')[]
+    sortBy?: 'imported_at' | 'shot_date' | 'file_name'
     sortOrder?: 'asc' | 'desc'
   }) => {
     const db = getDb()
-    const { page, pageSize, filters = {}, search, sortBy = 'imported_at', sortOrder = 'desc' } = params
+    const {
+      page,
+      pageSize,
+      filters = {},
+      subLibraryId,
+      search,
+      dateFrom,
+      dateTo,
+      dateField = 'imported_at',
+      fileTypes = [],
+      organizationStatuses = [],
+      sortBy = 'imported_at',
+      sortOrder = 'desc'
+    } = params
     const offset = (page - 1) * pageSize
-    const sortCol = sortBy === 'file_name' ? 'original_name' : sortBy
+    const sortExpression = sortBy === 'file_name'
+      ? 'p.original_name'
+      : sortBy === 'shot_date'
+        ? 'COALESCE(p.shot_date, p.imported_at)'
+        : 'p.imported_at'
+    const dateColumn = dateField === 'shot_date' ? 'p.shot_date' : 'p.imported_at'
 
-    let sql = `SELECT DISTINCT p.* FROM photos p JOIN photo_rolls pr ON pr.photo_id = p.id AND pr.roll_id = ?`
-    const args: unknown[] = [rollId]
+    let sql = 'SELECT DISTINCT p.* FROM photos p'
+    const args: unknown[] = []
+    const wheres: string[] = []
+    if (rollId == null) {
+      wheres.push('NOT EXISTS (SELECT 1 FROM photo_rolls unassigned_pr WHERE unassigned_pr.photo_id = p.id)')
+    } else {
+      sql += ' JOIN photo_rolls pr ON pr.photo_id = p.id AND pr.roll_id = ?'
+      args.push(rollId)
+    }
     let joinIdx = 0
 
     for (const [typeId, valueIds] of Object.entries(filters)) {
@@ -257,10 +346,44 @@ export function registerRollsIpc(): void {
       args.push(...(valueIds as number[]))
     }
 
-    const wheres: string[] = []
+    if (subLibraryId != null) {
+      wheres.push(`p.sub_library_id IN (
+        WITH RECURSIVE descendants(id) AS (
+          SELECT ?
+          UNION ALL
+          SELECT child.id
+          FROM sub_libraries child
+          JOIN descendants parent ON child.parent_id = parent.id
+        )
+        SELECT id FROM descendants
+      )`)
+      args.push(subLibraryId)
+    }
     if (search) { wheres.push('p.original_name LIKE ?'); args.push(`%${search}%`) }
+    if (dateFrom) { wheres.push(`${dateColumn} >= ?`); args.push(dateFrom) }
+    if (dateTo) {
+      wheres.push(`${dateColumn} <= ?`)
+      args.push(dateField === 'shot_date' ? dateTo : dateTo + ' 23:59:59')
+    }
+    if (fileTypes.length > 0) {
+      wheres.push(`p.file_type IN (${fileTypes.map(() => '?').join(',')})`)
+      args.push(...fileTypes)
+    }
+    if (organizationStatuses.includes('unclassified')) {
+      wheres.push('p.sub_library_id IS NULL')
+    }
+    if (organizationStatuses.includes('missing_date')) {
+      wheres.push("(p.shot_date IS NULL OR p.shot_date = '')")
+    }
+    if (organizationStatuses.includes('missing_camera')) {
+      wheres.push(`NOT EXISTS (
+        SELECT 1 FROM photo_attributes status_pa
+        JOIN attribute_types status_at ON status_at.id = status_pa.attribute_type_id
+        WHERE status_pa.photo_id = p.id AND status_at.key = 'camera'
+      )`)
+    }
     if (wheres.length) sql += ' WHERE ' + wheres.join(' AND ')
-    sql += ` ORDER BY p.${sortCol} ${sortOrder}`
+    sql += ` ORDER BY ${sortExpression} ${sortOrder === 'asc' ? 'ASC' : 'DESC'}`
 
     const countSql = `SELECT COUNT(*) as total FROM (${sql}) t`
     const total = (db.prepare(countSql).get(...args) as { total: number }).total
@@ -330,16 +453,61 @@ export function registerRollsIpc(): void {
   })
 }
 
-function getPhotolessCount(db: ReturnType<typeof getDb>, subLibraryId?: number): number {
-  let sql = `
-    SELECT COUNT(*) as c FROM photos p
-    WHERE p.id NOT IN (SELECT photo_id FROM photo_rolls)
-  `
+function getPhotolessCount(db: ReturnType<typeof getDb>, params: RollQueryParams): number {
+  const {
+    subLibraryId,
+    filters = {},
+    search,
+    dateFrom,
+    dateTo,
+    dateField = 'imported_at',
+    fileTypes = [],
+    organizationStatuses = []
+  } = params
+  const dateColumn = dateField === 'shot_date' ? 'p.shot_date' : 'p.imported_at'
+  let sql = 'SELECT COUNT(DISTINCT p.id) as c FROM photos p'
   const args: unknown[] = []
+  let joinIdx = 0
+  for (const [typeId, valueIds] of Object.entries(filters)) {
+    if (!valueIds || valueIds.length === 0) continue
+    const alias = `other_pa${joinIdx++}`
+    sql += ` JOIN photo_attributes ${alias} ON ${alias}.photo_id = p.id AND ${alias}.attribute_type_id = ${typeId} AND ${alias}.attribute_value_id IN (${valueIds.map(() => '?').join(',')})`
+    args.push(...valueIds)
+  }
+  const wheres = ['NOT EXISTS (SELECT 1 FROM photo_rolls other_pr WHERE other_pr.photo_id = p.id)']
+  if (search) { wheres.push('p.original_name LIKE ?'); args.push(`%${search}%`) }
+  if (dateFrom) { wheres.push(`${dateColumn} >= ?`); args.push(dateFrom) }
+  if (dateTo) {
+    wheres.push(`${dateColumn} <= ?`)
+    args.push(dateField === 'shot_date' ? dateTo : dateTo + ' 23:59:59')
+  }
+  if (fileTypes.length > 0) {
+    wheres.push(`p.file_type IN (${fileTypes.map(() => '?').join(',')})`)
+    args.push(...fileTypes)
+  }
+  if (organizationStatuses.includes('unclassified')) wheres.push('p.sub_library_id IS NULL')
+  if (organizationStatuses.includes('missing_date')) wheres.push("(p.shot_date IS NULL OR p.shot_date = '')")
+  if (organizationStatuses.includes('missing_camera')) {
+    wheres.push(`NOT EXISTS (
+      SELECT 1 FROM photo_attributes status_pa
+      JOIN attribute_types status_at ON status_at.id = status_pa.attribute_type_id
+      WHERE status_pa.photo_id = p.id AND status_at.key = 'camera'
+    )`)
+  }
   if (subLibraryId != null) {
-    sql += ' AND p.sub_library_id = ?'
+    wheres.push(`p.sub_library_id IN (
+      WITH RECURSIVE descendants(id) AS (
+        SELECT ?
+        UNION ALL
+        SELECT child.id
+        FROM sub_libraries child
+        JOIN descendants parent ON child.parent_id = parent.id
+      )
+      SELECT id FROM descendants
+    )`)
     args.push(subLibraryId)
   }
+  sql += ' WHERE ' + wheres.join(' AND ')
   return (db.prepare(sql).get(...args) as { c: number }).c
 }
 
@@ -356,6 +524,7 @@ interface PhotoRow {
   sub_library_id?: number
   imported_at: string
   shot_date?: string | null
+  rotation: number
   notes: string
 }
 

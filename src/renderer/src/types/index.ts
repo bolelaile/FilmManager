@@ -11,6 +11,7 @@ export interface Photo {
   sub_library_id?: number
   imported_at: string
   shot_date?: string | null
+  rotation: 0 | 90 | 180 | 270
   notes: string
   attributes: PhotoAttribute[]
 }
@@ -127,12 +128,24 @@ export interface LocationSearchResult {
   lng: number
 }
 
+export type AutoOrganizeMode = 'none' | 'year' | 'year-month' | 'camera' | 'film' | 'source-folder'
+
+export type OrganizationStatus = 'unclassified' | 'missing_date' | 'missing_camera'
+
+export interface PhotoFilterOptions {
+  fileTypes: { value: string; count: number }[]
+  statusCounts: Record<OrganizationStatus, number>
+}
+
 export interface FilterState {
   filters: Record<number, number[]> // typeId -> [valueId, ...]
   subLibraryId?: number
   search?: string
   dateFrom?: string
   dateTo?: string
-  sortBy: 'imported_at' | 'file_name'
+  dateField: 'imported_at' | 'shot_date'
+  fileTypes?: string[]
+  organizationStatuses?: OrganizationStatus[]
+  sortBy: 'imported_at' | 'shot_date' | 'file_name'
   sortOrder: 'asc' | 'desc'
 }

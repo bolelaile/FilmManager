@@ -4,6 +4,7 @@ import { createHash } from 'crypto'
 import log from 'electron-log'
 import sharp from 'sharp'
 import exifReader from 'exif-reader'
+import { nativeImage } from 'electron'
 
 export const THUMB_SIZE = 400
 export const SUPPORTED_EXTENSIONS = new Set([
@@ -24,6 +25,69 @@ export function getFileType(filePath: string): string {
 export function normalizeRotation(rotation: number): 0 | 90 | 180 | 270 {
   const normalized = ((Math.round(rotation / 90) * 90) % 360 + 360) % 360
   return normalized as 0 | 90 | 180 | 270
+}
+
+interface RawPixelData { buffer: Buffer; width: number; height: number; channels: 3 | 4 }
+
+/**
+ * 纯 JS 解析 BMP 文件，返回 RGB/RGBA 原始像素数据。
+ * 支持 24bpp 和 32bpp 无压缩（compression=0）及位域（compression=3）格式，
+ * 涵盖绝大多数相机/扫描仪输出的 BMP 文件。
+ */
+function decodeBmp(filePath: string): RawPixelData | null {
+  try {
+    const data = fs.readFileSync(filePath)
+    if (data.length < 54 || data[0] !== 0x42 || data[1] !== 0x4D) return null
+    const pixelDataOffset = data.readUInt32LE(10)
+    const width = data.readInt32LE(18)
+    const rawHeight = data.readInt32LE(22)
+    const bitsPerPixel = data.readUInt16LE(28)
+    const compression = data.readUInt32LE(30)
+    if ((bitsPerPixel !== 24 && bitsPerPixel !== 32) || (compression !== 0 && compression !== 3)) return null
+    if (width <= 0 || rawHeight === 0) return null
+    const absHeight = Math.abs(rawHeight)
+    const isTopDown = rawHeight < 0
+    const bytesPerPixel = bitsPerPixel >> 3
+    const rowStride = Math.floor((bitsPerPixel * width + 31) / 32) * 4
+    const channels: 3 | 4 = bytesPerPixel === 4 ? 4 : 3
+    const raw = Buffer.allocUnsafe(width * absHeight * channels)
+    for (let row = 0; row < absHeight; row++) {
+      const srcRow = isTopDown ? row : absHeight - 1 - row
+      const rowBase = pixelDataOffset + srcRow * rowStride
+      const dstBase = row * width * channels
+      for (let col = 0; col < width; col++) {
+        const src = rowBase + col * bytesPerPixel
+        const dst = dstBase + col * channels
+        raw[dst] = data[src + 2]     // R（BMP 以 BGR 顺序存储）
+        raw[dst + 1] = data[src + 1] // G
+        raw[dst + 2] = data[src]     // B
+        if (channels === 4) raw[dst + 3] = data[src + 3] // A
+      }
+    }
+    return { buffer: raw, width, height: absHeight, channels }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 创建适合处理该文件的 sharp 实例。
+ * BMP 格式先通过纯 JS 解码器转为原始像素数据，
+ * 再回退 nativeImage（兜底），其余格式直接传路径。
+ */
+function openSharp(filePath: string): sharp.Sharp {
+  const ext = path.extname(filePath).toLowerCase()
+  if (ext === '.bmp') {
+    const raw = decodeBmp(filePath)
+    if (raw) {
+      return sharp(raw.buffer, { raw: { width: raw.width, height: raw.height, channels: raw.channels } })
+    }
+    try {
+      const img = nativeImage.createFromPath(filePath)
+      if (!img.isEmpty()) return sharp(img.toPNG())
+    } catch {}
+  }
+  return sharp(filePath)
 }
 
 /** 从 RAW 文件中提取嵌入的 JPEG 预览 */
@@ -108,7 +172,7 @@ export async function generateThumbnail(
       }
       return null
     } else {
-      let pipeline = sharp(sourcePath)
+      let pipeline = openSharp(sourcePath)
       if (normalizedRotation) pipeline = pipeline.rotate(normalizedRotation)
       await pipeline
         .resize(THUMB_SIZE, THUMB_SIZE, { fit: 'inside' })
@@ -136,7 +200,7 @@ export async function getImageMeta(filePath: string): Promise<{ width: number; h
       }
       return null
     }
-    const meta = await sharp(filePath).metadata()
+    const meta = await openSharp(filePath).metadata()
     return { width: meta.width ?? 0, height: meta.height ?? 0 }
   } catch {
     return null
@@ -273,7 +337,7 @@ export async function getExifData(filePath: string): Promise<ExifData> {
         if (embedded) meta = await sharp(embedded).metadata()
       }
     } else {
-      meta = await sharp(filePath).metadata()
+      meta = await openSharp(filePath).metadata()
     }
     return meta.exif ? parseExifBuffer(meta.exif) : emptyExifData()
   } catch {
@@ -304,7 +368,7 @@ export async function renderFullPreview(
         pipeline = sharp(embedded)
       }
     } else {
-      pipeline = sharp(filePath)
+      pipeline = openSharp(filePath)
     }
 
     const normalizedRotation = normalizeRotation(rotation)

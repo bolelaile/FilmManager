@@ -29,7 +29,7 @@ export function registerLibraryIpc(): void {
     if (thumbPath) {
       db.prepare('UPDATE photos SET thumb_path = ?, thumb_ready = 1 WHERE id = ?').run(thumbPath, photoId)
     }
-    return !!thumbPath
+    return thumbPath ?? null
   })
 
   // 获取可用 ICC 配置文件列表

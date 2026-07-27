@@ -5,12 +5,14 @@ import {
   CopyOutlined,
   DeleteOutlined,
   EditOutlined,
+  FileImageOutlined,
   FolderOpenOutlined,
   FolderOutlined,
   RotateRightOutlined
 } from '@ant-design/icons'
 import type { Photo, AttributeType } from '../../types'
 import PhotoCard from './PhotoCard'
+import { FilmIconImg } from '../FilmIcon'
 import { useStore } from '../../store'
 
 // 窗口/全屏列数规格
@@ -85,6 +87,33 @@ export default function PhotoGrid({
   const justDraggedRef      = useRef(false)
   const [selBox, setSelBox] = useState<{ left: number; top: number; width: number; height: number } | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
+
+  // 悬停预览状态（仅大视图使用）
+  const [hoveredPhoto, setHoveredPhoto] = useState<Photo | null>(null)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const handlePhotoHover = useCallback((photo: Photo) => {
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current)
+    setHoveredPhoto(photo)
+    // 立即显示缩略图（快速反馈）
+    if (photo.thumb_path && photo.thumb_ready) {
+      setPreviewUrl(`localfile://${encodeURIComponent(photo.thumb_path)}`)
+    } else {
+      setPreviewUrl(null)
+    }
+    // 延迟 280ms 加载全分辨率预览（防抖，避免快速滑过时频繁 IPC）
+    hoverTimerRef.current = setTimeout(async () => {
+      try {
+        const result = await window.api.photos.fullPreview(photo.file_path, undefined, photo.rotation ?? 0) as { dataUrl: string } | null
+        if (result) setPreviewUrl(result.dataUrl)
+      } catch {}
+    }, 280)
+  }, [])
+
+  useEffect(() => () => {
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current)
+  }, [])
 
   // ResizeObserver 监听容器宽度（含窗口拖拽、全屏切换）
   useEffect(() => {
@@ -269,8 +298,9 @@ export default function PhotoGrid({
   const menuX = contextMenu ? Math.min(contextMenu.x, window.innerWidth - 200) : 0
   const menuY = contextMenu ? Math.min(contextMenu.y, window.innerHeight - 246) : 0
   const contextTargetCount = contextMenu?.targetIds.length ?? 0
+  const showPreviewPanel = thumbnailSize === 'large'
 
-  return (
+  const gridNode = (
     <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
       <div
         ref={containerRef}
@@ -322,6 +352,7 @@ export default function PhotoGrid({
                     onSelect={() => toggleSelect(photo.id)}
                     onDoubleClick={() => onOpenViewer(photo, startIdx + i)}
                     onContextMenu={handleContextMenu}
+                    onHover={showPreviewPanel ? handlePhotoHover : undefined}
                   />
                 ))}
               </div>
@@ -385,6 +416,133 @@ export default function PhotoGrid({
           />
         </div>
       )}
+    </div>
+  )
+
+  if (!showPreviewPanel) {
+    return gridNode
+  }
+
+  return (
+    <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+      {gridNode}
+      <HoverPreviewPanel
+        photo={hoveredPhoto}
+        previewUrl={previewUrl}
+        attrTypes={attrTypes}
+      />
+    </div>
+  )
+}
+
+// ── 右侧悬停预览面板 ────────────────────────────────────────────────
+const PANEL_WIDTH = 300
+
+function formatFileSize(bytes?: number): string {
+  if (!bytes) return '—'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div style={{ display: 'flex', gap: 6, marginBottom: 5, lineHeight: '16px' }}>
+      <span style={{ color: '#666', fontSize: 11, flexShrink: 0, width: 64, textAlign: 'right' }}>{label}</span>
+      <span style={{ color: '#bbb', fontSize: 11, flex: 1, minWidth: 0, overflowWrap: 'break-word' }}>{value}</span>
+    </div>
+  )
+}
+
+function HoverPreviewPanel({
+  photo,
+  previewUrl,
+  attrTypes
+}: {
+  photo: Photo | null
+  previewUrl: string | null
+  attrTypes: AttributeType[]
+}) {
+  return (
+    <div style={{
+      width: PANEL_WIDTH, flexShrink: 0, display: 'flex', flexDirection: 'column',
+      background: '#141414', borderLeft: '1px solid #222', overflow: 'hidden'
+    }}>
+      {/* 预览图区域 */}
+      <div style={{
+        width: PANEL_WIDTH, height: PANEL_WIDTH,
+        background: '#0e0e0e', flexShrink: 0,
+        display: 'flex', alignItems: 'center', justifyContent: 'center'
+      }}>
+        {previewUrl ? (
+          <img
+            src={previewUrl}
+            alt=""
+            style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+          />
+        ) : photo ? (
+          <div style={{ textAlign: 'center', color: '#333' }}>
+            <FileImageOutlined style={{ fontSize: 36 }} />
+            <div style={{ fontSize: 11, marginTop: 6 }}>{photo.file_type.toUpperCase()}</div>
+          </div>
+        ) : (
+          <div style={{ color: '#333', fontSize: 12 }}>悬停照片预览</div>
+        )}
+      </div>
+
+      {/* 元数据区域 */}
+      <div style={{ flex: 1, overflow: 'auto', padding: '12px 12px 16px' }}>
+        {photo ? (
+          <>
+            {/* 文件名 */}
+            <div style={{
+              color: '#ddd', fontSize: 12, fontWeight: 500,
+              marginBottom: 10, overflowWrap: 'break-word', lineHeight: '17px'
+            }}>
+              {photo.original_name}
+            </div>
+
+            {/* 基本文件信息 */}
+            <InfoRow label="格式" value={photo.file_type.toUpperCase()} />
+            {(photo.width && photo.height) ? (
+              <InfoRow label="尺寸" value={`${photo.width} × ${photo.height}`} />
+            ) : null}
+            <InfoRow label="大小" value={formatFileSize(photo.file_size)} />
+            {photo.shot_date && <InfoRow label="拍摄日期" value={photo.shot_date} />}
+            <InfoRow label="入库日期" value={photo.imported_at.substring(0, 10)} />
+            {photo.rotation ? <InfoRow label="旋转" value={`${photo.rotation}°`} /> : null}
+
+            {/* 属性 */}
+            {attrTypes
+              .filter((t) => t.is_active)
+              .map((t) => {
+                const attr = photo.attributes?.find((a) => a.key === t.key)
+                if (!attr) return null
+                const isFilm = t.key === 'film'
+                const iconKey = isFilm ? (attr as any).icon_key : null
+                return (
+                  <InfoRow
+                    key={t.id}
+                    label={t.display_name}
+                    value={
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        {isFilm && iconKey && <FilmIconImg iconKey={iconKey} size={11} />}
+                        {attr.value}
+                      </span>
+                    }
+                  />
+                )
+              })}
+
+            {/* 备注 */}
+            {photo.notes && <InfoRow label="备注" value={photo.notes} />}
+          </>
+        ) : (
+          <div style={{ color: '#444', fontSize: 12, marginTop: 8, textAlign: 'center' }}>
+            将鼠标移到照片上查看详情
+          </div>
+        )}
+      </div>
     </div>
   )
 }

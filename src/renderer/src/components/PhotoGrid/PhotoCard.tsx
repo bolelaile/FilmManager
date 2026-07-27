@@ -14,6 +14,7 @@ interface PhotoCardProps {
   onSelect: () => void
   onDoubleClick: () => void
   onContextMenu: (photo: Photo, x: number, y: number) => void
+  onHover?: (photo: Photo) => void
 }
 
 // ── 小视图：横向列表卡片 ─────────────────────────────────────────────
@@ -24,15 +25,23 @@ function SmallCard({
   attrTypes,
   onSelect,
   onDoubleClick,
-  onContextMenu
+  onContextMenu,
+  onHover
 }: PhotoCardProps) {
   const [thumbUrl, setThumbUrl] = useState<string | null>(null)
 
   useEffect(() => {
     if (photo.thumb_path && photo.thumb_ready) {
       setThumbUrl(`localfile://${encodeURIComponent(photo.thumb_path)}`)
+    } else {
+      // 缩略图缺失时自动尝试重新生成（主要针对 BMP 等之前无法生成缩略图的格式）
+      window.api.library.regenThumb(photo.id).then((thumbPath) => {
+        if (thumbPath && typeof thumbPath === 'string') {
+          setThumbUrl(`localfile://${encodeURIComponent(thumbPath)}`)
+        }
+      }).catch(() => {})
     }
-  }, [photo.thumb_path, photo.thumb_ready])
+  }, [photo.id, photo.thumb_path, photo.thumb_ready])
 
   const isRaw = !['jpg', 'jpeg', 'png', 'tiff', 'tif', 'bmp', 'webp'].includes(
     photo.file_type.toLowerCase()
@@ -60,6 +69,7 @@ function SmallCard({
       }}
       onClick={onSelect}
       onDoubleClick={onDoubleClick}
+      onMouseEnter={() => onHover?.(photo)}
       onContextMenu={(e) => { e.preventDefault(); onContextMenu(photo, e.clientX, e.clientY) }}
     >
       {/* 缩略图 */}
@@ -145,7 +155,8 @@ function TileCard({
   selected,
   onSelect,
   onDoubleClick,
-  onContextMenu
+  onContextMenu,
+  onHover
 }: PhotoCardProps) {
   const [thumbUrl, setThumbUrl] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -155,9 +166,15 @@ function TileCard({
       setThumbUrl(`localfile://${encodeURIComponent(photo.thumb_path)}`)
       setLoading(false)
     } else {
-      setLoading(false)
+      // 缩略图缺失时自动尝试重新生成
+      window.api.library.regenThumb(photo.id).then((thumbPath) => {
+        if (thumbPath && typeof thumbPath === 'string') {
+          setThumbUrl(`localfile://${encodeURIComponent(thumbPath)}`)
+        }
+        setLoading(false)
+      }).catch(() => { setLoading(false) })
     }
-  }, [photo.thumb_path, photo.thumb_ready])
+  }, [photo.id, photo.thumb_path, photo.thumb_ready])
 
   const cameraAttr = photo.attributes?.find((a) => a.key === 'camera')
   const filmAttr = photo.attributes?.find((a) => a.key === 'film')
@@ -172,6 +189,7 @@ function TileCard({
       style={{ width: size, flexShrink: 0, cursor: 'pointer', position: 'relative' }}
       onClick={onSelect}
       onDoubleClick={onDoubleClick}
+      onMouseEnter={() => onHover?.(photo)}
       onContextMenu={(e) => {
         e.preventDefault()
         onContextMenu(photo, e.clientX, e.clientY)

@@ -1,6 +1,6 @@
 # FilmManager 产品规格文档
 
-**版本：** 1.1.8
+**版本：** 1.2.0
 **技术栈：** Electron 29 · React 18 · Ant Design 5 · better-sqlite3 · Sharp · electron-vite
 
 ---

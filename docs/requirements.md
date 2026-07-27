@@ -55,7 +55,6 @@
 | 库 | 版本 | 用途 |
 |----|------|------|
 | **leaflet** | ^1.9.4 | 地图渲染引擎，使用 OpenStreetMap 底图 |
-| **react-leaflet** | ^5.0.0 | Leaflet 的 React 封装 |
 | **@types/leaflet** | ^1.9.21 | Leaflet TypeScript 类型声明（放在 dependencies 供运行时使用） |
 
 ### 4.3 数据库

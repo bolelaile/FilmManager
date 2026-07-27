@@ -432,7 +432,7 @@ AttributeType（类别）  →  AttributeValue（可选值）  →  photo_attrib
 
 ### 5.6 地点地图（MapView）
 
-基于 **Leaflet** + react-leaflet，使用 OpenStreetMap 底图：
+基于 **Leaflet** 原生 API，使用 OpenStreetMap 底图：
 
 - 显示所有已标记地点的位置标记
 - 点击标记弹出信息框，显示地点名称和照片数量

@@ -88,7 +88,7 @@ export default function TopBar({
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
     width: 40, height: 48, border: 'none', background: 'transparent',
     cursor: 'pointer', color: '#777', fontSize: 12, flexShrink: 0,
-    WebkitAppRegion: 'no-drag' as never, transition: 'background 0.12s, color 0.12s',
+    WebkitAppRegion: 'no-drag', transition: 'background 0.12s, color 0.12s',
     padding: 0
   }
 
@@ -104,19 +104,19 @@ export default function TopBar({
         position: 'sticky',
         top: 0,
         zIndex: 100,
-        WebkitAppRegion: 'drag' as never
+        WebkitAppRegion: 'drag'
       }}
     >
       {/* 标题 */}
-      <div style={{ fontWeight: 700, fontSize: 15, color: '#c8832a', letterSpacing: 1, padding: '0 14px 0 16px', flexShrink: 0, WebkitAppRegion: 'drag' as never }}>
+      <div style={{ fontWeight: 700, fontSize: 15, color: '#c8832a', letterSpacing: 1, padding: '0 14px 0 16px', flexShrink: 0, WebkitAppRegion: 'drag' }}>
         FilmManager
       </div>
 
       {/* 拖拽占位 */}
-      <div style={{ flex: 1, WebkitAppRegion: 'drag' as never }} />
+      <div style={{ flex: 1, WebkitAppRegion: 'drag' }} />
 
       {/* 操作区 */}
-      <Space size={6} style={{ WebkitAppRegion: 'no-drag' as never, padding: '0 6px' }}>
+      <Space size={6} style={{ WebkitAppRegion: 'no-drag', padding: '0 6px' }}>
         <Input
           prefix={<SearchOutlined style={{ color: '#666' }} />}
           placeholder="搜索文件名..."
@@ -199,7 +199,7 @@ export default function TopBar({
           <Button icon={<SettingOutlined />} onClick={() => setSettingsOpen(true)} style={{ background: '#1f1f1f', borderColor: '#333', color: '#ccc' }} />
         </Tooltip>
 
-        <span style={{ color: '#555', fontSize: 11, minWidth: 44, textAlign: 'center', WebkitAppRegion: 'drag' as never }}>
+        <span style={{ color: '#555', fontSize: 11, minWidth: 44, textAlign: 'center', WebkitAppRegion: 'drag' }}>
           {totalCount} 张
         </span>
       </Space>

@@ -195,7 +195,7 @@ FilmManager/
 | 虚拟滚动 | @tanstack/react-virtual 3 |
 | 数据库 | SQLite（better-sqlite3 9，WAL 模式） |
 | 图像处理 | Sharp 0.33（缩略图、RAW 解码、EXIF、ICC） |
-| 地图 | Leaflet 1.9 + react-leaflet 5 + OpenStreetMap |
+| 地图 | Leaflet 1.9 原生 API + OpenStreetMap |
 | 构建工具 | electron-vite 2 + Vite 5 |
 | 打包 | electron-builder 24（NSIS） |
 

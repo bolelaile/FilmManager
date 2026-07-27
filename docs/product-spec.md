@@ -229,12 +229,14 @@ CREATE TABLE locations (
 CREATE INDEX idx_photo_locations_loc ON photo_locations(location_id);
 ```
 
-**初始预置地点数据**（数据库首次创建时自动写入）
+**预置地点数据**（数据库启动时按名称增量补齐，不覆盖用户已有地点）
 
 - 4 个直辖市（北京、上海、天津、重庆）
 - 31 个省会/自治区首府/特别行政区（含香港、澳门、台北）
-- 约 50 个主要副省级城市及热门旅游目的地（桂林、三亚、丽江、大理、九寨沟、敦煌等）
+- 各省主要地级市、自治州和旅行落脚点
+- 城市常见机位、历史街区和自然景区（故宫、外滩、洪崖洞、霞浦、元阳梯田、赛里木湖等）
 - 北京 10 个区 + 上海 10 个区
+- 合计约 345 个不重名预置地点；升级时自动合并旧版坐标相同的重复预置项并保留照片关联
 
 地点搜索通过 **OpenStreetMap Nominatim API** 实时查询，结果可保存至本地数据库。
 
@@ -354,11 +356,11 @@ AttributeType（类别）  →  AttributeValue（可选值）  →  photo_attrib
 - **单击**：选中/取消选中照片
 - **鼠标框选（rubber-band）**：在空白处按住左键拖拽，框选矩形内所有照片
 - **双击**：打开全屏查看器
-- **右键菜单**：在文件管理器中显示 · 复制路径 · 从库中删除
+- **右键菜单**：在文件管理器中显示 · 复制路径 · 编辑属性和拍摄地点 · 顺时针旋转 90° · 移动到子库 · 从库中移除
 
-**多选操作（顶栏）**
-- 选中照片后，顶栏出现"删除所选"按钮（红色）和"批量编辑属性"按钮（橙色）
-- 批量编辑：打开 BatchEditModal，可同时为所有选中照片设置任意属性，留空的属性不覆盖
+**多选操作**
+- 选中照片后，顶栏仅保留带选中数量徽标的建卷入口，其他批量操作从照片右键菜单进入
+- 批量编辑：打开 BatchEditModal，可同时为所有选中照片设置任意属性，并设置、更换或清除拍摄地点
 
 **筛选与排序**
 - 左侧筛选面板：按各属性类别的值筛选，显示每个值的照片数量
@@ -435,6 +437,8 @@ AttributeType（类别）  →  AttributeValue（可选值）  →  photo_attrib
 - 显示所有已标记地点的位置标记
 - 点击标记弹出信息框，显示地点名称和照片数量
 - 支持通过 Nominatim API 实时搜索新地点
+- 底图按 OSM.de → Esri World Street Map → 标准 OpenStreetMap 的顺序加载；单个来源连续报错或 25 秒无瓦片进展后自动切换
+- 所有来源失败时显示错误状态和手动重试按钮，切换到备用源时显示当前来源
 
 ### 5.7 相机库（CameraLibrary）
 
@@ -448,19 +452,20 @@ AttributeType（类别）  →  AttributeValue（可选值）  →  photo_attrib
 
 同上，操作 `lens` 属性类别。
 
-### 5.9 批量编辑属性（BatchEditModal）
+### 5.9 批量编辑照片信息（BatchEditModal）
 
-多选照片后点击顶栏"批量编辑属性"按钮打开：
+单张或多选照片后，从右键菜单选择“编辑属性和地点”打开：
 
 - 列出所有激活属性类别（含胶片图标选择器）
 - 留空 = 不修改该属性；填写 = 覆盖所有选中照片的对应属性
+- 拍摄地点提供“不修改 / 设置或更换 / 清除”三种模式；设置时优先检索本地预置地点
 - 支持 search-to-create 内联新增属性值
-- 调用 `photos.batchSetAttributes` 一次性更新，操作完成后清除选中状态并刷新列表
+- 属性调用 `photos.batchSetAttributes` 更新，地点调用 `locations.setForPhotos` 事务更新；操作完成后清除选中状态并刷新列表
 
 ### 5.10 批量照片操作
 
 - 右键未选照片时仅选中该照片；右键已选照片时保留当前多选集合，菜单操作作用于全部已选照片
-- 右键菜单提供单张/批量属性编辑、顺时针旋转 90°、移动到子库和“从库中移除”；批量移除前显示确认对话框且保留本地文件
+- 右键菜单提供单张/批量属性与拍摄地点编辑、顺时针旋转 90°、移动到子库和“从库中移除”；批量移除前显示确认对话框且保留本地文件
 - 选中一张或多张照片后，顶栏只保留带选中数量徽标的建卷入口；其他批量操作统一从右键菜单进入
 - 移动弹窗支持任意层级子库或“未分类（根目录）”，同时移动本地文件并更新绝对路径，随后刷新当前列表和子库计数
 - 详情抽屉中的“所属子库”下拉继续支持单张照片移动
@@ -557,6 +562,7 @@ AttributeType（类别）  →  AttributeValue（可选值）  →  photo_attrib
 | `locations.delete(id)` | 删除地点 |
 | `locations.update(id, name, address)` | 修改地点 |
 | `locations.forPhoto(photoId)` | 获取照片关联的地点 |
+| `locations.setForPhotos(photoIds, locationId)` | 批量覆盖拍摄地点；`locationId = null` 时清除 |
 | `locations.addToPhoto(photoId, locationId)` | 关联地点 |
 | `locations.removeFromPhoto(photoId, locationId)` | 取消关联 |
 | `locations.search(query)` | OpenStreetMap 实时搜索 |

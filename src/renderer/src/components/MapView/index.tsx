@@ -2,12 +2,40 @@
  * MapView — 显示所有有照片标记的地点，点击地标查看该地点照片
  */
 import React, { useEffect, useState, useRef, useCallback } from 'react'
-import { Modal, Button, Spin, Empty } from 'antd'
-import { CloseOutlined, EnvironmentOutlined, LeftOutlined } from '@ant-design/icons'
+import { Modal, Button, Spin, Empty, message } from 'antd'
+import { CloseOutlined, EnvironmentOutlined, LeftOutlined, ReloadOutlined } from '@ant-design/icons'
 import type { Location, Photo } from '../../types'
 
 // Leaflet must be imported dynamically to avoid SSR issues
 let L: typeof import('leaflet') | null = null
+
+const TILE_STALL_TIMEOUT = 25000
+const TILE_SOURCES = [
+  {
+    name: 'OpenStreetMap.de',
+    url: 'https://tile.openstreetmap.de/{z}/{x}/{y}.png',
+    attribution: '© OpenStreetMap contributors',
+    maxZoom: 18
+  },
+  {
+    name: 'Esri World Street Map',
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+    attribution: 'Tiles © Esri',
+    maxZoom: 19
+  },
+  {
+    name: 'OpenStreetMap',
+    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    attribution: '© OpenStreetMap contributors',
+    maxZoom: 19
+  }
+] as const
+
+interface TileLoadState {
+  status: 'idle' | 'loading' | 'ready' | 'error'
+  sourceIndex: number
+  sourceName: string
+}
 
 interface MapLocation extends Location {
   photo_count: number
@@ -26,12 +54,19 @@ interface MapViewProps {
 export default function MapView({ open, onClose }: MapViewProps) {
   const mapRef = useRef<HTMLDivElement>(null)
   const leafletMap = useRef<import('leaflet').Map | null>(null)
+  const tileLayerRef = useRef<import('leaflet').TileLayer | null>(null)
+  const retryTilesRef = useRef<(() => void) | null>(null)
   const markersRef = useRef<import('leaflet').Marker[]>([])
   const [mapData, setMapData] = useState<MapData | null>(null)
   const [loading, setLoading] = useState(false)
   const [selectedLoc, setSelectedLoc] = useState<MapLocation | null>(null)
   const [locPhotos, setLocPhotos] = useState<Photo[]>([])
   const [loadingPhotos, setLoadingPhotos] = useState(false)
+  const [tileLoad, setTileLoad] = useState<TileLoadState>({
+    status: 'idle',
+    sourceIndex: 0,
+    sourceName: TILE_SOURCES[0].name
+  })
 
   // lazy load leaflet (renderer only)
   const initLeaflet = useCallback(async () => {
@@ -62,6 +97,7 @@ export default function MapView({ open, onClose }: MapViewProps) {
     } else {
       setSelectedLoc(null)
       setLocPhotos([])
+      setTileLoad({ status: 'idle', sourceIndex: 0, sourceName: TILE_SOURCES[0].name })
     }
   }, [open])
 
@@ -69,8 +105,19 @@ export default function MapView({ open, onClose }: MapViewProps) {
   useEffect(() => {
     if (!open || !mapData || !mapRef.current) return
 
+    let disposed = false
+    let sourceAttempt = 0
+    let fallbackTimer: number | null = null
+
+    const clearFallbackTimer = () => {
+      if (fallbackTimer != null) {
+        window.clearTimeout(fallbackTimer)
+        fallbackTimer = null
+      }
+    }
+
     initLeaflet().then(() => {
-      if (!L || !mapRef.current) return
+      if (disposed || !L || !mapRef.current) return
 
       // destroy old map
       if (leafletMap.current) {
@@ -84,10 +131,57 @@ export default function MapView({ open, onClose }: MapViewProps) {
         zoomControl: true
       })
 
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap contributors',
-        maxZoom: 18
-      }).addTo(map)
+      const activateTileSource = (sourceIndex: number) => {
+        if (disposed || !L) return
+        const source = TILE_SOURCES[sourceIndex]
+        const attempt = ++sourceAttempt
+        let tileErrors = 0
+        clearFallbackTimer()
+        tileLayerRef.current?.remove()
+        setTileLoad({ status: 'loading', sourceIndex, sourceName: source.name })
+
+        const useNextSource = () => {
+          if (disposed || attempt !== sourceAttempt) return
+          clearFallbackTimer()
+          if (sourceIndex + 1 < TILE_SOURCES.length) {
+            const nextSource = TILE_SOURCES[sourceIndex + 1]
+            message.warning(`${source.name} 加载失败，正在切换到 ${nextSource.name}`)
+            activateTileSource(sourceIndex + 1)
+          } else {
+            setTileLoad({ status: 'error', sourceIndex, sourceName: source.name })
+            message.error('所有地图瓦片源均加载失败')
+          }
+        }
+
+        const layer = L.tileLayer(source.url, {
+          attribution: source.attribution,
+          maxZoom: source.maxZoom
+        })
+        const scheduleStallFallback = () => {
+          clearFallbackTimer()
+          fallbackTimer = window.setTimeout(useNextSource, TILE_STALL_TIMEOUT)
+        }
+        layer.on('tileload', () => {
+          if (disposed || attempt !== sourceAttempt) return
+          scheduleStallFallback()
+        })
+        layer.on('load', () => {
+          if (disposed || attempt !== sourceAttempt) return
+          clearFallbackTimer()
+          setTileLoad({ status: 'ready', sourceIndex, sourceName: source.name })
+        })
+        layer.on('tileerror', () => {
+          if (disposed || attempt !== sourceAttempt) return
+          tileErrors++
+          if (tileErrors >= 2) useNextSource()
+        })
+        layer.addTo(map)
+        tileLayerRef.current = layer
+        scheduleStallFallback()
+      }
+
+      retryTilesRef.current = () => activateTileSource(0)
+      activateTileSource(0)
 
       leafletMap.current = map
       markersRef.current = []
@@ -157,7 +251,10 @@ export default function MapView({ open, onClose }: MapViewProps) {
     })
 
     return () => {
-      // don't destroy on data change, only on close
+      disposed = true
+      sourceAttempt++
+      clearFallbackTimer()
+      retryTilesRef.current = null
     }
   }, [open, mapData])
 
@@ -166,6 +263,7 @@ export default function MapView({ open, onClose }: MapViewProps) {
     if (!open && leafletMap.current) {
       leafletMap.current.remove()
       leafletMap.current = null
+      tileLayerRef.current = null
     }
   }, [open])
 
@@ -219,6 +317,43 @@ export default function MapView({ open, onClose }: MapViewProps) {
       <div style={{ display: 'flex', height: '75vh' }}>
         {/* 地图区域 */}
         <div style={{ flex: 1, position: 'relative' }}>
+          {tileLoad.status === 'loading' && (
+            <div data-map-tile-status="loading" data-map-tile-source={tileLoad.sourceName} style={{
+              position: 'absolute', top: 10, right: 10, zIndex: 1000,
+              display: 'flex', alignItems: 'center', gap: 7,
+              padding: '6px 10px', background: 'rgba(20,20,20,0.88)',
+              border: '1px solid #333', borderRadius: 4, color: '#aaa', fontSize: 12
+            }}>
+              <Spin size="small" />
+              正在加载 {tileLoad.sourceName}
+            </div>
+          )}
+          {tileLoad.status === 'ready' && tileLoad.sourceIndex > 0 && (
+            <div data-map-tile-status="ready" data-map-tile-source={tileLoad.sourceName} style={{
+              position: 'absolute', top: 10, right: 10, zIndex: 1000,
+              padding: '6px 10px', background: 'rgba(20,20,20,0.82)',
+              border: '1px solid #333', borderRadius: 4, color: '#888', fontSize: 12
+            }}>
+              备用地图：{tileLoad.sourceName}
+            </div>
+          )}
+          {tileLoad.status === 'error' && (
+            <div data-map-tile-status="error" data-map-tile-source={tileLoad.sourceName} style={{
+              position: 'absolute', top: 10, right: 10, zIndex: 1000,
+              display: 'flex', alignItems: 'center', gap: 8,
+              padding: '6px 10px', background: 'rgba(40,18,18,0.9)',
+              border: '1px solid #5c2020', borderRadius: 4, color: '#ff7875', fontSize: 12
+            }}>
+              <span>地图底图加载失败</span>
+              <Button
+                size="small"
+                type="text"
+                icon={<ReloadOutlined />}
+                onClick={() => retryTilesRef.current?.()}
+                style={{ color: '#ff9c99', padding: '0 4px', height: 22 }}
+              />
+            </div>
+          )}
           {loading && (
             <div style={{
               position: 'absolute', inset: 0, zIndex: 10,

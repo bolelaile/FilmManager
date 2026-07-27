@@ -459,7 +459,7 @@ export default function Library() {
         onChanged={() => { loadAttrs(); loadPhotos(true); loadSubLibs() }}
       />
 
-      {/* 批量编辑属性 */}
+      {/* 批量编辑属性和拍摄地点 */}
       <BatchEditModal
         open={batchEditOpen}
         selectedIds={[...selectedIds]}

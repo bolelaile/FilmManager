@@ -52,7 +52,8 @@ export default function PhotoGrid({
   photos, loading, hasMore, attrTypes,
   onLoadMore, onOpenViewer, onBatchEdit, onBatchRotate, onMoveToSubLibrary, onPhotoDeleted
 }: PhotoGridProps) {
-  const containerRef = useRef<HTMLDivElement>(null)
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const resizeObserverRef = useRef<ResizeObserver | null>(null)
   const { thumbnailSize, selectedIds, toggleSelect, selectAll, clearSelection } = useStore()
   const [containerWidth, setContainerWidth] = useState(0)
 
@@ -86,14 +87,23 @@ export default function PhotoGrid({
   const [selBox, setSelBox] = useState<{ left: number; top: number; width: number; height: number } | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
 
-  // ResizeObserver 监听容器宽度（含窗口拖拽、全屏切换）
-  useEffect(() => {
-    const ro = new ResizeObserver((entries) => {
+  // 空状态和照片网格会切换挂载；callback ref 确保容器出现后一定开始测量。
+  const handleContainerRef = useCallback((node: HTMLDivElement | null) => {
+    resizeObserverRef.current?.disconnect()
+    resizeObserverRef.current = null
+    containerRef.current = node
+
+    if (!node) return
+
+    setContainerWidth(node.getBoundingClientRect().width)
+    const observer = new ResizeObserver((entries) => {
       setContainerWidth(entries[0].contentRect.width)
     })
-    if (containerRef.current) ro.observe(containerRef.current)
-    return () => ro.disconnect()
+    observer.observe(node)
+    resizeObserverRef.current = observer
   }, [])
+
+  useEffect(() => () => resizeObserverRef.current?.disconnect(), [])
 
   const rowVirtualizer = useVirtualizer({
     count: rowCount,
@@ -273,7 +283,7 @@ export default function PhotoGrid({
   return (
     <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
       <div
-        ref={containerRef}
+        ref={handleContainerRef}
         style={{ height: '100%', overflow: 'auto', userSelect: 'none' }}
         onClick={(e) => {
           if (justDraggedRef.current) { justDraggedRef.current = false; return }
@@ -363,7 +373,7 @@ export default function PhotoGrid({
           <div style={{ borderTop: '1px solid #2a2a2a', margin: '4px 0' }} />
           <CtxItem
             icon={<EditOutlined />}
-            label={contextTargetCount > 1 ? `批量编辑属性（${contextTargetCount} 张）` : '编辑属性'}
+            label={contextTargetCount > 1 ? `批量编辑属性和地点（${contextTargetCount} 张）` : '编辑属性和地点'}
             onClick={handleBatchEdit}
           />
           <CtxItem

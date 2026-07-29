@@ -2,7 +2,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
 import './styles.css'
-import 'maplibre-gl/dist/maplibre-gl.css'
+import 'leaflet/dist/leaflet.css'
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },

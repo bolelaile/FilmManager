@@ -2,7 +2,7 @@
 
 面向胶片摄影爱好者的本地桌面应用，用于管理胶片扫描文件。
 
-**当前版本：** 1.2.0 · **平台：** Windows x64
+**当前版本：** 1.2.1 · **平台：** Windows x64
 
 ---
 
@@ -358,6 +358,7 @@ FilmManager/
 | 1.1.11 | 外部软件联动：① 全屏预览标题栏新增"用其他应用打开"按钮（方格图标），点击后展开已检测到的图像处理软件列表，选择后立即以当前照片路径启动对应软件；② 照片网格右键菜单新增"用其他应用打开"条目，鼠标悬停后右侧弹出软件子菜单，支持批量多选后一次性向目标软件传入所有已选照片路径；③ 应用检测覆盖：Adobe Photoshop / Lightroom Classic / Lightroom、GIMP、Capture One、RawTherapee、darktable、IrfanView、Paint.NET、FastStone Image Viewer、XnViewMP、ACDSee、Affinity Photo、像素蛋糕（Polarr）、Luminar Neo / AI、ON1 Photo RAW、DxO PhotoLab、Corel PaintShop Pro 等；通过扫描常见安装目录与 Windows 注册表 App Paths 自动定位实际可执行文件 |
 | 1.1.12 | 稳定性修复：① 修复筛选条件切换时照片网格出现空白的 race condition——改用单调递增 loadCounterRef 替换布尔锁，filter 变化触发的重置请求不再被正在执行的分页请求静默丢弃；② 新增用户操作安全刷新机制，监听 mouseup / keyup 事件，用户停止操作 800 ms 后自动执行一次照片列表硬刷新，确保任何交互后图库始终显示最新数据；③ 修复地点地图视图打开后显示全黑的问题——Ant Design Modal 进场动画期间容器尺寸为 0，导致 Leaflet 无法正确请求瓦片，现通过 afterOpenChange 回调与 200 ms 兜底定时器双重触发 invalidateSize()，动画结束后地图自动补全瓦片渲染 |
 | 1.2.0 | 版本整合与全面优化：① 地图视图改用 MapLibre GL JS（WebGL canvas 渲染，彻底修复 Modal 内黑屏），同时实现三源自动轮换（OSM → OSM.de → Esri），弱网/超时后自动切换并在标题栏提示当前源；② BatchEditModal 新增批量设置拍摄地点功能（set / skip / clear 三档）；③ 地点种子数据大幅扩充（新增各省地级市、旅行摄影常用地点，修正哈纳斯→喀纳斯等错别字，改进重复地点合并逻辑）；④ setForPhotos IPC 支持 locationId=null 直接清除地点，兼容卷视图批量清除操作；⑤ TopBar WebkitAppRegion 类型修正；⑥ faceted search 联动计数行为保持：有筛选条件时只显示结果集中存在的属性值 |
+| 1.2.1 | 补丁修复：① 修复地图视图黑屏根本原因——CSP 补全 `connect-src https: blob:`、`worker-src blob:`、`child-src blob:` 指令，解除 MapLibre GL 通过 fetch 加载 OSM 瓦片时被浏览器拦截的问题；② 地图多瓦片源轮换增加超时兜底（25 s 无瓦片响应自动切换），连续 3 次 tile error 亦触发切换；③ map.resize() 在 Modal afterOpenChange 回调中调用，确保动画结束后 WebGL canvas 取得正确尺寸；④ LocationPicker 地图选点完整迁移至 MapLibre GL，移除对 Leaflet 的最后依赖 |
 
 ---
 

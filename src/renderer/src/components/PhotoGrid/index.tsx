@@ -2,12 +2,15 @@ import React, { useRef, useCallback, useEffect, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { Spin, Empty, Modal, message } from 'antd'
 import {
+  AppstoreOutlined,
   CopyOutlined,
   DeleteOutlined,
   EditOutlined,
   FileImageOutlined,
   FolderOpenOutlined,
   FolderOutlined,
+  LoadingOutlined,
+  RightOutlined,
   RotateRightOutlined
 } from '@ant-design/icons'
 import type { Photo, AttributeType } from '../../types'
@@ -87,6 +90,9 @@ export default function PhotoGrid({
   const justDraggedRef      = useRef(false)
   const [selBox, setSelBox] = useState<{ left: number; top: number; width: number; height: number } | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
+  const [openWithApps, setOpenWithApps] = useState<{ name: string; exePath: string }[] | null>(null)
+  const [openWithLoading, setOpenWithLoading] = useState(false)
+  const [openWithSubmenuVisible, setOpenWithSubmenuVisible] = useState(false)
 
   // 悬停预览状态（仅大视图使用）
   const [hoveredPhoto, setHoveredPhoto] = useState<Photo | null>(null)
@@ -287,6 +293,29 @@ export default function PhotoGrid({
     onMoveToSubLibrary()
   }
 
+  const handleOpenWithHover = async () => {
+    setOpenWithSubmenuVisible(true)
+    if (openWithApps !== null) return // already loaded
+    setOpenWithLoading(true)
+    try {
+      const apps = await window.api.app.detectImageApps() as { name: string; exePath: string }[]
+      setOpenWithApps(apps)
+    } finally {
+      setOpenWithLoading(false)
+    }
+  }
+
+  const handleOpenWithApp = async (exePath: string) => {
+    if (!contextMenu) return
+    const filePaths = photos
+      .filter((p) => contextMenu.targetIds.includes(p.id))
+      .map((p) => p.file_path)
+    setContextMenu(null)
+    setOpenWithSubmenuVisible(false)
+    const ok = await window.api.app.openWithApp(exePath, filePaths) as boolean
+    if (!ok) message.error('无法打开该应用，请确认程序路径正确')
+  }
+
   if (!loading && photos.length === 0) {
     return (
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -296,15 +325,15 @@ export default function PhotoGrid({
   }
 
   const menuX = contextMenu ? Math.min(contextMenu.x, window.innerWidth - 200) : 0
-  const menuY = contextMenu ? Math.min(contextMenu.y, window.innerHeight - 246) : 0
+  const menuY = contextMenu ? Math.min(contextMenu.y, window.innerHeight - 280) : 0
   const contextTargetCount = contextMenu?.targetIds.length ?? 0
   const showPreviewPanel = thumbnailSize === 'large'
 
   const gridNode = (
-    <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+    <div style={{ flex: 1, minWidth: 0, position: 'relative', overflow: 'hidden' }}>
       <div
         ref={containerRef}
-        style={{ height: '100%', overflow: 'auto', userSelect: 'none' }}
+        style={{ width: '100%', height: '100%', overflow: 'auto', userSelect: 'none' }}
         onClick={(e) => {
           if (justDraggedRef.current) { justDraggedRef.current = false; return }
           if ((e.target as HTMLElement).closest('.photo-card') === null) clearSelection()
@@ -384,13 +413,62 @@ export default function PhotoGrid({
             position: 'fixed', left: menuX, top: menuY,
             background: '#1e1e1e', border: '1px solid #2e2e2e',
             borderRadius: 6, boxShadow: '0 4px 20px rgba(0,0,0,0.65)',
-            zIndex: 2000, overflow: 'hidden', minWidth: 188, padding: '4px 0'
+            zIndex: 2000, overflow: 'visible', minWidth: 188, padding: '4px 0'
           }}
           onClick={(e) => e.stopPropagation()}
           onContextMenu={(e) => { e.preventDefault(); e.stopPropagation() }}
         >
           <CtxItem icon={<FolderOpenOutlined />} label="在文件管理器中打开" onClick={handleRevealFile} />
           <CtxItem icon={<CopyOutlined />} label="复制文件路径" onClick={handleCopyPath} />
+          {/* 用其他应用打开 — 悬停展开子菜单 */}
+          <div
+            style={{ position: 'relative' }}
+            onMouseEnter={handleOpenWithHover}
+            onMouseLeave={() => setOpenWithSubmenuVisible(false)}
+          >
+            <CtxItem
+              icon={<AppstoreOutlined />}
+              label={contextTargetCount > 1 ? `用其他应用打开（${contextTargetCount} 张）` : '用其他应用打开'}
+              suffix={<RightOutlined style={{ fontSize: 10, color: '#555' }} />}
+              onClick={handleOpenWithHover}
+            />
+            {openWithSubmenuVisible && (
+              <div style={{
+                position: 'absolute',
+                top: 0,
+                left: '100%',
+                marginLeft: 2,
+                background: '#1e1e1e',
+                border: '1px solid #2e2e2e',
+                borderRadius: 6,
+                boxShadow: '0 4px 20px rgba(0,0,0,0.65)',
+                minWidth: 180,
+                maxHeight: 300,
+                overflowY: 'auto',
+                padding: '4px 0',
+                zIndex: 2001
+              }}>
+                {openWithLoading && (
+                  <div style={{ padding: '8px 12px', color: '#666', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <LoadingOutlined /> 检测已安装应用…
+                  </div>
+                )}
+                {!openWithLoading && openWithApps !== null && openWithApps.length === 0 && (
+                  <div style={{ padding: '8px 12px', color: '#555', fontSize: 12 }}>
+                    未检测到图像处理应用
+                  </div>
+                )}
+                {!openWithLoading && openWithApps?.map((app) => (
+                  <CtxItem
+                    key={app.exePath}
+                    icon={<AppstoreOutlined />}
+                    label={app.name}
+                    onClick={() => handleOpenWithApp(app.exePath)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
           <div style={{ borderTop: '1px solid #2a2a2a', margin: '4px 0' }} />
           <CtxItem
             icon={<EditOutlined />}
@@ -436,7 +514,7 @@ export default function PhotoGrid({
 }
 
 // ── 右侧悬停预览面板 ────────────────────────────────────────────────
-const PANEL_WIDTH = 300
+const PANEL_WIDTH = 360
 
 function formatFileSize(bytes?: number): string {
   if (!bytes) return '—'
@@ -468,17 +546,18 @@ function HoverPreviewPanel({
       width: PANEL_WIDTH, flexShrink: 0, display: 'flex', flexDirection: 'column',
       background: '#141414', borderLeft: '1px solid #222', overflow: 'hidden'
     }}>
-      {/* 预览图区域 */}
+      {/* 预览图区域：宽度100%，高度自适应（正方形），顶部留出间距 */}
       <div style={{
-        width: PANEL_WIDTH, height: PANEL_WIDTH,
-        background: '#0e0e0e', flexShrink: 0,
-        display: 'flex', alignItems: 'center', justifyContent: 'center'
+        width: '100%', aspectRatio: '1 / 1', flexShrink: 0,
+        background: '#0e0e0e',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: 12, boxSizing: 'border-box'
       }}>
         {previewUrl ? (
           <img
             src={previewUrl}
             alt=""
-            style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+            style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', display: 'block' }}
           />
         ) : photo ? (
           <div style={{ textAlign: 'center', color: '#333' }}>
@@ -491,7 +570,7 @@ function HoverPreviewPanel({
       </div>
 
       {/* 元数据区域 */}
-      <div style={{ flex: 1, overflow: 'auto', padding: '12px 12px 16px' }}>
+      <div style={{ flex: 1, overflow: 'auto', padding: '10px 14px 16px' }}>
         {photo ? (
           <>
             {/* 文件名 */}
@@ -551,12 +630,14 @@ function CtxItem({
   icon,
   label,
   onClick,
-  danger
+  danger,
+  suffix
 }: {
   icon: React.ReactNode
   label: string
   onClick: () => void
   danger?: boolean
+  suffix?: React.ReactNode
 }) {
   const [hovered, setHovered] = useState(false)
   return (
@@ -574,7 +655,8 @@ function CtxItem({
       onClick={onClick}
     >
       <span style={{ width: 16, display: 'inline-flex', justifyContent: 'center' }}>{icon}</span>
-      <span>{label}</span>
+      <span style={{ flex: 1 }}>{label}</span>
+      {suffix && <span style={{ marginLeft: 'auto' }}>{suffix}</span>}
     </div>
   )
 }

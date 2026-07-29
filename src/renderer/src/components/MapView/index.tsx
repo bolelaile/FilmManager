@@ -78,9 +78,13 @@ export default function MapView({ open, onClose }: MapViewProps) {
         leafletMap.current = null
       }
 
+      // 无地点时默认显示中国，有地点时 fitBounds
+      const defaultCenter: [number, number] = [35.5, 105]
+      const defaultZoom = 4
+
       const map = L.map(mapRef.current, {
-        center: [20, 0],
-        zoom: 2,
+        center: defaultCenter,
+        zoom: defaultZoom,
         zoomControl: true
       })
 
@@ -173,17 +177,16 @@ export default function MapView({ open, onClose }: MapViewProps) {
     setSelectedLoc(loc)
     setLoadingPhotos(true)
     try {
-      // fetch photos for this location
+      // fetch photos IDs for this location, then load those photos
+      const photoIds = new Set(await window.api.locations.photos(loc.id) as number[])
+      if (photoIds.size === 0) { setLocPhotos([]); return }
       const result = await window.api.photos.list({
         page: 1,
         pageSize: 200,
         filters: {},
-        sortBy: 'imported_at',
+        sortBy: 'shot_date',
         sortOrder: 'desc'
       }) as { total: number; rows: Photo[] }
-
-      // filter to only photos at this location
-      const photoIds = new Set(await window.api.locations.photos(loc.id) as number[])
       setLocPhotos(result.rows.filter((p) => photoIds.has(p.id)))
     } finally {
       setLoadingPhotos(false)
@@ -230,19 +233,18 @@ export default function MapView({ open, onClose }: MapViewProps) {
           )}
           {!loading && mapData?.locations.length === 0 && (
             <div style={{
-              position: 'absolute', inset: 0, zIndex: 10,
-              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-              background: '#141414', gap: 12
+              position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)',
+              zIndex: 10, background: 'rgba(20,20,20,0.85)', borderRadius: 8,
+              padding: '8px 16px', color: '#666', fontSize: 12, pointerEvents: 'none',
+              whiteSpace: 'nowrap'
             }}>
-              <EnvironmentOutlined style={{ fontSize: 40, color: '#333' }} />
-              <div style={{ color: '#555' }}>暂无地点数据</div>
-              <div style={{ color: '#444', fontSize: 12 }}>在照片详情面板中为照片添加拍摄地点</div>
+              暂无地点数据 — 在照片详情中为照片添加拍摄地点
             </div>
           )}
           <div ref={mapRef} style={{ width: '100%', height: '100%' }} />
         </div>
 
-        {/* 右侧面板 */}
+        {/* 右侧面板：选中地点后展示 */}
         {selectedLoc && (
           <div style={{
             width: 320,
@@ -284,31 +286,40 @@ export default function MapView({ open, onClose }: MapViewProps) {
                 <div style={{
                   display: 'grid',
                   gridTemplateColumns: 'repeat(3, 1fr)',
-                  gap: 4
+                  gap: 6
                 }}>
-                  {locPhotos.map((photo) => (
-                    <div
-                      key={photo.id}
-                      style={{
-                        aspectRatio: '1',
-                        background: '#111',
-                        borderRadius: 4,
-                        overflow: 'hidden'
-                      }}
-                    >
-                      {photo.thumb_ready && photo.thumb_path ? (
-                        <img
-                          src={`localfile://${encodeURIComponent(photo.thumb_path)}`}
-                          alt={photo.original_name}
-                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                        />
-                      ) : (
-                        <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#333', fontSize: 10 }}>
-                          {photo.original_name.substring(0, 6)}
+                  {locPhotos.map((photo) => {
+                    const dateStr = photo.shot_date
+                      ? photo.shot_date
+                      : photo.imported_at?.substring(0, 10) ?? ''
+                    return (
+                      <div key={photo.id} style={{ display: 'flex', flexDirection: 'column' }}>
+                        <div style={{
+                          aspectRatio: '1',
+                          background: '#111',
+                          borderRadius: 4,
+                          overflow: 'hidden'
+                        }}>
+                          {photo.thumb_ready && photo.thumb_path ? (
+                            <img
+                              src={`localfile://${encodeURIComponent(photo.thumb_path)}`}
+                              alt={photo.original_name}
+                              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                            />
+                          ) : (
+                            <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#333', fontSize: 10 }}>
+                              {photo.file_type.toUpperCase()}
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
-                  ))}
+                        {dateStr && (
+                          <div style={{ color: '#555', fontSize: 9, marginTop: 2, textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {dateStr}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
                 </div>
               )}
             </div>

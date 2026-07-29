@@ -308,14 +308,23 @@ export default function FilterPanel({ attrTypes, valueCounts, subLibCounts, filt
         style={{ flex: 1 }}
       >
         {attrTypes.filter((type) => type.key !== 'imported_at').map((type) => {
-          const selectedForType = filter.filters[type.id] ?? []
+        const selectedForType = filter.filters[type.id] ?? []
           const searchQuery = attrSearch[type.id] ?? ''
           const nq = normalize(searchQuery)
+
+          // 有任何筛选条件时，隐藏与当前筛选结果不兼容的属性值（count=0）
+          const hasActiveFilters = Object.values(filter.filters).some((v) => v.length > 0) ||
+            !!filter.dateFrom || !!filter.dateTo ||
+            (filter.fileTypes ?? []).length > 0 ||
+            (filter.organizationStatuses ?? []).length > 0 ||
+            filter.subLibraryId != null ||
+            !!filter.search
+
           const allValues = (type.values ?? [])
             .filter((v) =>
-              v.is_preset === 0 ||
+              selectedForType.includes(v.id) ||
               (valueCounts[type.id]?.[v.id] ?? 0) > 0 ||
-              selectedForType.includes(v.id)
+              (!hasActiveFilters && v.is_preset === 0)
             )
           const visibleValues = nq
             ? allValues.filter((v) => normalize(v.value).includes(nq))

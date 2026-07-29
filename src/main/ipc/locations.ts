@@ -1,4 +1,4 @@
-import { ipcMain, net } from 'electron'
+import { ipcMain } from 'electron'
 import { getDb } from '../db/index'
 
 interface Location {
@@ -78,6 +78,19 @@ export function registerLocationsIpc(): void {
     return true
   })
 
+  // 批量清除照片的地点记录
+  ipcMain.handle('locations:clearForPhotos', (_, photoIds: number[]) => {
+    const db = getDb()
+    const del = db.prepare('DELETE FROM photo_locations WHERE photo_id = ?')
+    const tx = db.transaction(() => {
+      for (const id of photoIds) {
+        del.run(id)
+      }
+    })
+    tx()
+    return true
+  })
+
   // 为单张照片添加 / 移除地点
   ipcMain.handle('locations:addToPhoto', (_, photoId: number, locationId: number) => {
     getDb()
@@ -115,6 +128,26 @@ export function registerLocationsIpc(): void {
       }))
     } catch {
       return []
+    }
+  })
+
+  // 反向地理编码：经纬度 → 附近地名（Nominatim /reverse）
+  ipcMain.handle('locations:reverseGeocode', async (_, lat: number, lng: number) => {
+    try {
+      const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&accept-language=zh&addressdetails=1&zoom=14`
+      const resp = await fetch(url, { headers: { 'User-Agent': 'FilmManager/1.0' } })
+      if (!resp.ok) return null
+      const d = await resp.json() as {
+        display_name?: string
+        address?: Record<string, string>
+      }
+      if (!d.display_name) return null
+      const name = d.address
+        ? (d.address.village || d.address.suburb || d.address.town || d.address.city || d.address.county || d.address.state || d.display_name.split(',')[0]).trim()
+        : d.display_name.split(',')[0].trim()
+      return { name, address: d.display_name, lat, lng }
+    } catch {
+      return null
     }
   })
 

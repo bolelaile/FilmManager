@@ -1,9 +1,10 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
-import { Spin, Button, Select, Divider, DatePicker, Input, message, Modal, Tooltip } from 'antd'
-import { FolderOpenOutlined, PlusOutlined, PictureOutlined, RotateRightOutlined } from '@ant-design/icons'
+import { Spin, Button, Select, Divider, DatePicker, Input, message, Modal, Tooltip, Popover } from 'antd'
+import { FolderOpenOutlined, PlusOutlined, PictureOutlined, RotateRightOutlined, EnvironmentOutlined, CloseOutlined, AppstoreOutlined, LoadingOutlined } from '@ant-design/icons'
 import { useStore } from '../../store'
-import type { Photo, IccProfile, AttributeType, AttributeValue } from '../../types'
+import type { Photo, IccProfile, AttributeType, AttributeValue, Location } from '../../types'
 import { FilmTag, FilmIconPicker } from '../FilmIcon'
+import LocationPicker from '../LocationPicker'
 import dayjs from 'dayjs'
 
 // ─── Histogram ────────────────────────────────────────────────────────────────
@@ -232,6 +233,13 @@ export default function PhotoViewer({ attrTypes, onAttrChanged }: PhotoViewerPro
   const [histogram, setHistogram] = useState<{ r: number[]; g: number[]; b: number[] } | null>(null)
   // live photo data (refreshed after attr edits)
   const [livePhoto, setLivePhoto] = useState<Photo | null>(null)
+  // location
+  const [photoLocations, setPhotoLocations] = useState<Location[]>([])
+  const [showLocationPicker, setShowLocationPicker] = useState(false)
+  // open with
+  const [openWithApps, setOpenWithApps] = useState<{ name: string; exePath: string }[] | null>(null)
+  const [openWithLoading, setOpenWithLoading] = useState(false)
+  const [openWithPopoverOpen, setOpenWithPopoverOpen] = useState(false)
 
   const [scale, setScale] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
@@ -245,8 +253,11 @@ export default function PhotoViewer({ attrTypes, onAttrChanged }: PhotoViewerPro
   // Reload full photo data (with attributes) when switching photos
   useEffect(() => {
     setLivePhoto(null)
+    setPhotoLocations([])
+    setShowLocationPicker(false)
     if (basePhoto) {
       window.api.photos.get(basePhoto.id).then((p) => { if (p) setLivePhoto(p as Photo) })
+      window.api.locations.forPhoto(basePhoto.id).then((locs) => setPhotoLocations(locs as Location[]))
     }
   }, [basePhoto?.id])
 
@@ -341,6 +352,42 @@ export default function PhotoViewer({ attrTypes, onAttrChanged }: PhotoViewerPro
     onAttrChanged?.()
   }
 
+  const handleAddLocation = async (loc: Location) => {
+    if (!basePhoto) return
+    await window.api.locations.addToPhoto(basePhoto.id, loc.id)
+    const locs = await window.api.locations.forPhoto(basePhoto.id) as Location[]
+    setPhotoLocations(locs)
+    setShowLocationPicker(false)
+    onAttrChanged?.()
+  }
+
+  const handleRemoveLocation = async (locId: number) => {
+    if (!basePhoto) return
+    await window.api.locations.removeFromPhoto(basePhoto.id, locId)
+    setPhotoLocations((prev) => prev.filter((l) => l.id !== locId))
+    onAttrChanged?.()
+  }
+
+  const handleOpenWithPopoverOpen = async (open: boolean) => {
+    setOpenWithPopoverOpen(open)
+    if (open && openWithApps === null) {
+      setOpenWithLoading(true)
+      try {
+        const apps = await window.api.app.detectImageApps() as { name: string; exePath: string }[]
+        setOpenWithApps(apps)
+      } finally {
+        setOpenWithLoading(false)
+      }
+    }
+  }
+
+  const handleOpenWithApp = async (exePath: string) => {
+    if (!basePhoto) return
+    setOpenWithPopoverOpen(false)
+    const ok = await window.api.app.openWithApp(exePath, [basePhoto.file_path]) as boolean
+    if (!ok) message.error('无法打开该应用，请确认程序路径正确')
+  }
+
   const handleRotate = async () => {
     if (!basePhoto) return
     const currentRotation = photo?.rotation ?? basePhoto.rotation ?? 0
@@ -404,6 +451,50 @@ export default function PhotoViewer({ attrTypes, onAttrChanged }: PhotoViewerPro
               style={{ background: '#1f1f1f', borderColor: '#333', color: '#c8832a' }}
             />
           </Tooltip>
+          <Popover
+            open={openWithPopoverOpen}
+            onOpenChange={(open) => { handleOpenWithPopoverOpen(open) }}
+            trigger="click"
+            placement="bottomRight"
+            overlayStyle={{ zIndex: 3000 }}
+            overlayInnerStyle={{ background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 8, padding: '4px 0', minWidth: 180 }}
+            title={null}
+            content={
+              <div onClick={(e) => e.stopPropagation()} style={{ minWidth: 180 }}>
+                {openWithLoading && (
+                  <div style={{ padding: '8px 12px', color: '#666', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <LoadingOutlined /> 检测已安装应用…
+                  </div>
+                )}
+                {!openWithLoading && openWithApps !== null && openWithApps.length === 0 && (
+                  <div style={{ padding: '8px 12px', color: '#555', fontSize: 12 }}>
+                    未检测到图像处理应用
+                  </div>
+                )}
+                {!openWithLoading && openWithApps?.map((app) => (
+                  <div
+                    key={app.exePath}
+                    onClick={() => handleOpenWithApp(app.exePath)}
+                    style={{ padding: '7px 14px', cursor: 'pointer', color: '#ccc', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}
+                    onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = '#2a2a2a' }}
+                    onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
+                  >
+                    <AppstoreOutlined style={{ color: '#c8832a', fontSize: 13 }} />
+                    {app.name}
+                  </div>
+                ))}
+              </div>
+            }
+          >
+            <Tooltip title="用其他应用打开">
+              <Button
+                size="small"
+                icon={<AppstoreOutlined />}
+                onClick={(e) => e.stopPropagation()}
+                style={{ background: '#1f1f1f', borderColor: '#333', color: '#ccc' }}
+              />
+            </Tooltip>
+          </Popover>
           <Button size="small" icon={<FolderOpenOutlined />} onClick={(e) => { e.stopPropagation(); window.api.library.revealFile(basePhoto.file_path) }}
             style={{ background: '#1f1f1f', borderColor: '#333', color: '#ccc' }} />
         </div>
@@ -533,6 +624,45 @@ export default function PhotoViewer({ attrTypes, onAttrChanged }: PhotoViewerPro
                 </div>
               </>
             )}
+
+            {/* Location */}
+            <Divider style={{ borderColor: '#1a1a1a', margin: '8px 0' }} />
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                <SectionLabel>拍摄地点</SectionLabel>
+                <Button
+                  size="small" type="text"
+                  icon={showLocationPicker ? <CloseOutlined /> : <PlusOutlined />}
+                  onClick={() => setShowLocationPicker((v) => !v)}
+                  style={{ color: '#c8832a', padding: 0, height: 18 }}
+                />
+              </div>
+              {photoLocations.map((loc) => (
+                <div key={loc.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginBottom: 5, background: '#1a1a1a', borderRadius: 4, padding: '5px 8px' }}>
+                  <EnvironmentOutlined style={{ color: '#c8832a', fontSize: 12, marginTop: 2, flexShrink: 0 }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ color: '#ccc', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{loc.name}</div>
+                    {loc.address && (
+                      <div style={{ color: '#555', fontSize: 10, marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{loc.address}</div>
+                    )}
+                  </div>
+                  <Button
+                    size="small" type="text"
+                    icon={<CloseOutlined />}
+                    onClick={() => handleRemoveLocation(loc.id)}
+                    style={{ color: '#444', padding: 0, fontSize: 10, height: 18, flexShrink: 0 }}
+                  />
+                </div>
+              ))}
+              {photoLocations.length === 0 && !showLocationPicker && (
+                <div style={{ color: '#444', fontSize: 11 }}>暂无拍摄地点</div>
+              )}
+              {showLocationPicker && (
+                <div style={{ marginTop: 6 }}>
+                  <LocationPicker onSelect={handleAddLocation} placeholder="搜索地点..." />
+                </div>
+              )}
+            </div>
           </div>
 
           <div style={{ padding: '8px 14px', borderTop: '1px solid #1a1a1a', flexShrink: 0 }}>

@@ -50,7 +50,7 @@ const api = {
     listTypes: () => ipcRenderer.invoke('attrs:listTypes'),
     listValues: (typeId: number) => ipcRenderer.invoke('attrs:listValues', typeId),
     listAll: () => ipcRenderer.invoke('attrs:listAll'),
-    valueCounts: (filters: unknown) => ipcRenderer.invoke('attrs:valueCounts', filters),
+    valueCounts: (params?: { filters?: Record<number, number[]>; subLibraryId?: number; search?: string; dateFrom?: string; dateTo?: string; dateField?: string; fileTypes?: string[]; organizationStatuses?: string[] }) => ipcRenderer.invoke('attrs:valueCounts', params),
     addType: (displayName: string) => ipcRenderer.invoke('attrs:addType', displayName),
     updateType: (id: number, displayName: string) => ipcRenderer.invoke('attrs:updateType', id, displayName),
     toggleType: (id: number, active: boolean) => ipcRenderer.invoke('attrs:toggleType', id, active),
@@ -96,7 +96,9 @@ const api = {
     getLogContent: (maxLines?: number) => ipcRenderer.invoke('app:getLogContent', maxLines),
     getLogPath: () => ipcRenderer.invoke('app:getLogPath'),
     revealLog: () => ipcRenderer.invoke('app:revealLog'),
-    openExternal: (url: string) => ipcRenderer.invoke('app:openExternal', url)
+    openExternal: (url: string) => ipcRenderer.invoke('app:openExternal', url),
+    detectImageApps: () => ipcRenderer.invoke('app:detectImageApps'),
+    openWithApp: (exePath: string, filePaths: string[]) => ipcRenderer.invoke('app:openWithApp', exePath, filePaths)
   },
   // 窗口控制
   win: {
@@ -115,7 +117,9 @@ const api = {
     setForPhotos: (photoIds: number[], locationId: number) => ipcRenderer.invoke('locations:setForPhotos', photoIds, locationId),
     addToPhoto: (photoId: number, locationId: number) => ipcRenderer.invoke('locations:addToPhoto', photoId, locationId),
     removeFromPhoto: (photoId: number, locationId: number) => ipcRenderer.invoke('locations:removeFromPhoto', photoId, locationId),
+    clearForPhotos: (photoIds: number[]) => ipcRenderer.invoke('locations:clearForPhotos', photoIds),
     search: (query: string) => ipcRenderer.invoke('locations:search', query),
+    reverseGeocode: (lat: number, lng: number) => ipcRenderer.invoke('locations:reverseGeocode', lat, lng),
     mapData: () => ipcRenderer.invoke('locations:mapData')
   },
   // 卷管理

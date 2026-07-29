@@ -34,15 +34,126 @@ export function registerAttributesIpc(): void {
     return types.map((t) => ({ ...t, values: valuesByType.get(t.id) ?? [] }))
   })
 
+interface ValueCountParams {
+  filters?: Record<number, number[]>
+  subLibraryId?: number
+  search?: string
+  dateFrom?: string
+  dateTo?: string
+  dateField?: string
+  fileTypes?: string[]
+  organizationStatuses?: string[]
+}
+
+type CountRow = { attribute_type_id: number; attribute_value_id: number; count: number }
+
+/** 构建"符合非属性类筛选 + 指定属性筛选（排除 excludeTypeId）"的照片 id 子查询 */
+function buildFilteredPhotoSql(
+  params: ValueCountParams,
+  excludeTypeId: number
+): { sql: string; args: unknown[] } {
+  const {
+    filters = {},
+    subLibraryId,
+    search,
+    dateFrom,
+    dateTo,
+    dateField = 'imported_at',
+    fileTypes = [],
+    organizationStatuses = []
+  } = params
+
+  let sql = 'SELECT DISTINCT p.id FROM photos p'
+  const args: unknown[] = []
+  let joinIdx = 0
+
+  for (const [typeId, valueIds] of Object.entries(filters)) {
+    const tid = Number(typeId)
+    if (tid === excludeTypeId || !valueIds || valueIds.length === 0) continue
+    const alias = `pa${joinIdx++}`
+    sql += ` JOIN photo_attributes ${alias} ON ${alias}.photo_id = p.id`
+      + ` AND ${alias}.attribute_type_id = ${tid}`
+      + ` AND ${alias}.attribute_value_id IN (${valueIds.map(() => '?').join(',')})`
+    args.push(...valueIds)
+  }
+
+  const wheres: string[] = []
+  if (subLibraryId != null) {
+    wheres.push(`p.sub_library_id IN (
+      WITH RECURSIVE descendants(id) AS (
+        SELECT ?
+        UNION ALL
+        SELECT child.id FROM sub_libraries child
+        JOIN descendants parent ON child.parent_id = parent.id
+      )
+      SELECT id FROM descendants
+    )`)
+    args.push(subLibraryId)
+  }
+  if (search) { wheres.push('p.original_name LIKE ?'); args.push(`%${search}%`) }
+  const dateCol = dateField === 'shot_date' ? 'p.shot_date' : 'p.imported_at'
+  if (dateFrom) { wheres.push(`${dateCol} >= ?`); args.push(dateFrom) }
+  if (dateTo) {
+    wheres.push(`${dateCol} <= ?`)
+    args.push(dateField === 'shot_date' ? dateTo : dateTo + ' 23:59:59')
+  }
+  if ((fileTypes as string[]).length > 0) {
+    wheres.push(`p.file_type IN (${(fileTypes as string[]).map(() => '?').join(',')})`)
+    args.push(...(fileTypes as string[]))
+  }
+  if ((organizationStatuses as string[]).includes('unclassified')) wheres.push('p.sub_library_id IS NULL')
+  if ((organizationStatuses as string[]).includes('missing_date')) wheres.push("(p.shot_date IS NULL OR p.shot_date = '')")
+  if ((organizationStatuses as string[]).includes('missing_camera')) {
+    wheres.push(`NOT EXISTS (
+      SELECT 1 FROM photo_attributes status_pa
+      JOIN attribute_types status_at ON status_at.id = status_pa.attribute_type_id
+      WHERE status_pa.photo_id = p.id AND status_at.key = 'camera'
+    )`)
+  }
+  if (wheres.length) sql += ' WHERE ' + wheres.join(' AND ')
+  return { sql, args }
+}
+
   // 获取各属性值的照片数量（用于筛选面板显示数量）
-  ipcMain.handle('attrs:valueCounts', () => {
-    const rows = getDb()
-      .prepare(
+  // 当传入 filters 等参数时，对每个属性类型使用"排除自身类型筛选"的联动计数（faceted search）
+  ipcMain.handle('attrs:valueCounts', (_, params?: ValueCountParams) => {
+    const db = getDb()
+    const filters = params?.filters ?? {}
+    const hasAttrFilters = Object.values(filters).some((v) => v.length > 0)
+    const hasNonAttrFilters = !!(
+      params?.subLibraryId != null ||
+      params?.dateFrom ||
+      params?.dateTo ||
+      (params?.fileTypes ?? []).length > 0 ||
+      (params?.organizationStatuses ?? []).length > 0 ||
+      params?.search
+    )
+
+    // 无任何筛选条件：走快速路径，返回全局计数
+    if (!hasAttrFilters && !hasNonAttrFilters) {
+      return db.prepare(
         `SELECT attribute_type_id, attribute_value_id, COUNT(DISTINCT photo_id) as count
          FROM photo_attributes GROUP BY attribute_type_id, attribute_value_id`
-      )
-      .all() as { attribute_type_id: number; attribute_value_id: number; count: number }[]
-    return rows
+      ).all() as CountRow[]
+    }
+
+    // 有筛选条件：对每个活跃属性类型分别查询（排除该类型自身的筛选）
+    const allTypes = db
+      .prepare('SELECT id FROM attribute_types WHERE is_active = 1')
+      .all() as { id: number }[]
+
+    const result: CountRow[] = []
+    for (const { id: typeId } of allTypes) {
+      const { sql, args } = buildFilteredPhotoSql(params!, typeId)
+      const rows = db.prepare(
+        `SELECT ? as attribute_type_id, pa.attribute_value_id, COUNT(DISTINCT pa.photo_id) as count
+         FROM photo_attributes pa
+         WHERE pa.attribute_type_id = ? AND pa.photo_id IN (${sql})
+         GROUP BY pa.attribute_value_id`
+      ).all(typeId, typeId, ...args) as CountRow[]
+      result.push(...rows)
+    }
+    return result
   })
 
   // 获取胶片图标 manifest（iconKey -> displayName）及图标 base64 dataURL 字典

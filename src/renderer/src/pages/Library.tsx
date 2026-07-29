@@ -69,20 +69,34 @@ export default function Library() {
   const [rollsLoading, setRollsLoading] = useState(false)
   const [unassignedOnly, setUnassignedOnly] = useState(false)
   const loadingRef = useRef(false)
+  const loadCounterRef = useRef(0)
+  const activityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const loadAttrs = useCallback(async () => {
-    const all = await window.api.attrs.listAll() as AttributeType[]
-    setLocalAttrTypes(all)
-    setAttrTypes(all)
-
-    const counts = await window.api.attrs.valueCounts({}) as { attribute_type_id: number; attribute_value_id: number; count: number }[]
+  const loadValueCounts = useCallback(async (f: typeof filter) => {
+    const counts = await window.api.attrs.valueCounts({
+      filters: f.filters,
+      subLibraryId: f.subLibraryId,
+      search: f.search,
+      dateFrom: f.dateFrom,
+      dateTo: f.dateTo,
+      dateField: f.dateField,
+      fileTypes: f.fileTypes,
+      organizationStatuses: f.organizationStatuses
+    }) as { attribute_type_id: number; attribute_value_id: number; count: number }[]
     const map: Record<string, Record<string, number>> = {}
     counts.forEach(({ attribute_type_id, attribute_value_id, count }) => {
       if (!map[attribute_type_id]) map[attribute_type_id] = {}
       map[attribute_type_id][attribute_value_id] = count
     })
     setValueCounts(map)
-  }, [setAttrTypes])
+  }, [])
+
+  const loadAttrs = useCallback(async () => {
+    const all = await window.api.attrs.listAll() as AttributeType[]
+    setLocalAttrTypes(all)
+    setAttrTypes(all)
+    await loadValueCounts(useStore.getState().filter)
+  }, [setAttrTypes, loadValueCounts])
 
   const loadSubLibs = useCallback(async () => {
     const [libs, counts, options] = await Promise.all([
@@ -96,7 +110,10 @@ export default function Library() {
   }, [setSubLibraries])
 
   const loadPhotos = useCallback(async (reset = false) => {
-    if (loadingRef.current) return
+    // For pagination (reset=false), prevent concurrent duplicate requests
+    if (!reset && loadingRef.current) return
+    // Each load gets a unique ID; stale results from superseded loads are discarded
+    const myCount = ++loadCounterRef.current
     loadingRef.current = true
     setLoading(true)
     const currentPage = reset ? 1 : page
@@ -134,6 +151,8 @@ export default function Library() {
           sortOrder: filter.sortOrder
         }) as { total: number; rows: Photo[] }
       }
+      // Discard result if a newer load has been started (filter changed mid-flight)
+      if (myCount !== loadCounterRef.current) return
       if (reset) {
         setPhotos(result.rows)
         setPage(2)
@@ -144,11 +163,15 @@ export default function Library() {
       setTotal(result.total)
       setHasMore(currentPage * PAGE_SIZE < result.total)
     } catch (err) {
+      if (myCount !== loadCounterRef.current) return
       console.error('loadPhotos failed:', err)
       message.error('加载照片失败，请检查日志')
     } finally {
-      setLoading(false)
-      loadingRef.current = false
+      // Only release the lock if this is still the active load
+      if (myCount === loadCounterRef.current) {
+        setLoading(false)
+        loadingRef.current = false
+      }
     }
   }, [filter, page, activeRoll, unassignedOnly])
 
@@ -174,7 +197,38 @@ export default function Library() {
     }
   }, [filter])
 
-  // 筛选条件变化时重置
+  // Always-current refs so the debounced activity handler never captures stale closures
+  const loadPhotosRef = useRef(loadPhotos)
+  const loadRollsRef = useRef(loadRolls)
+  useEffect(() => { loadPhotosRef.current = loadPhotos }, [loadPhotos])
+  useEffect(() => { loadRollsRef.current = loadRolls }, [loadRolls])
+
+  // After any user activity (click / keypress) debounce 800 ms then hard-refresh the grid.
+  // This is a safety net on top of the filter-driven useEffect: even if a stale lock somehow
+  // blocked a previous reload, the next user gesture will trigger a clean reset.
+  const handleActivity = useCallback(() => {
+    if (activityTimerRef.current) clearTimeout(activityTimerRef.current)
+    activityTimerRef.current = setTimeout(() => {
+      const { viewMode: vm, activeRoll: ar } = useStore.getState()
+      if (vm === 'rolls' && !ar) {
+        loadRollsRef.current()
+      } else {
+        loadPhotosRef.current(true)
+      }
+    }, 800)
+  }, [])
+
+  useEffect(() => {
+    window.addEventListener('mouseup', handleActivity)
+    window.addEventListener('keyup', handleActivity)
+    return () => {
+      window.removeEventListener('mouseup', handleActivity)
+      window.removeEventListener('keyup', handleActivity)
+      if (activityTimerRef.current) clearTimeout(activityTimerRef.current)
+    }
+  }, [handleActivity])
+
+  // 筛选条件变化时重置并更新联动计数
   useEffect(() => {
     setPage(1)
     if (viewMode === 'rolls' && !activeRoll) {
@@ -182,6 +236,7 @@ export default function Library() {
     } else {
       loadPhotos(true)
     }
+    loadValueCounts(filter)
   }, [filter, viewMode, activeRoll, unassignedOnly])
 
   useEffect(() => {
@@ -325,6 +380,7 @@ export default function Library() {
               onOtherPhotosClick={handleOtherPhotosClick}
               onRollDeleted={() => loadRolls()}
               onRollRenamed={() => loadRolls()}
+              onRollLocationChanged={() => loadRolls()}
             />
           ) : (
             <PhotoGrid

@@ -1,8 +1,9 @@
 import React, { useRef, useEffect, useState } from 'react'
-import { Spin, Empty, Tooltip, Tag, Popconfirm, message } from 'antd'
-import { DeleteOutlined, EditOutlined, EnvironmentOutlined, PictureOutlined } from '@ant-design/icons'
-import type { Roll, AttributeType } from '../../types'
+import { Spin, Empty, Tooltip, Tag, Popconfirm, message, Popover } from 'antd'
+import { DeleteOutlined, EditOutlined, EnvironmentOutlined, PictureOutlined, CloseOutlined, PlusOutlined } from '@ant-design/icons'
+import type { Roll, AttributeType, Location } from '../../types'
 import { FilmIconImg } from '../FilmIcon'
+import LocationPicker from '../LocationPicker'
 
 const WIDE_THRESHOLD = 1400
 const COLS = { normal: 4, wide: 6 }
@@ -19,11 +20,12 @@ interface RollsViewProps {
   onOtherPhotosClick: () => void
   onRollDeleted: () => void
   onRollRenamed: () => void
+  onRollLocationChanged?: () => void
 }
 
 export default function RollsView({
   rolls, photolessCount, loading, attrTypes,
-  onRollClick, onOtherPhotosClick, onRollDeleted, onRollRenamed
+  onRollClick, onOtherPhotosClick, onRollDeleted, onRollRenamed, onRollLocationChanged
 }: RollsViewProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [containerWidth, setContainerWidth] = useState(0)
@@ -120,6 +122,7 @@ export default function RollsView({
             onRollClick={onRollClick}
             onRename={handleRename}
             onDelete={handleDelete}
+            onLocationChanged={onRollLocationChanged}
           />
         ))}
 
@@ -149,18 +152,62 @@ interface RollCardProps {
   onRollClick: (roll: Roll) => void
   onRename: (id: number) => void
   onDelete: (id: number) => void
+  onLocationChanged?: () => void
 }
 
 function RollCard({
   roll, cardWidth, thumbUrl, filmType, filmFormatType,
   renamingId, renameName, onSetRenamingId, onSetRenameName,
-  onRollClick, onRename, onDelete
+  onRollClick, onRename, onDelete, onLocationChanged
 }: RollCardProps) {
   const filmAttr = roll.attributes.find((a) => a.key === 'film')
   const filmFormatAttr = roll.attributes.find((a) => a.key === 'film_format')
   const isRenaming = renamingId === roll.id
+  const [locationPopoverOpen, setLocationPopoverOpen] = useState(false)
 
   const imgHeight = CARD_HEIGHT - 72
+
+  const handleSetLocation = async (loc: Location) => {
+    // Get photo IDs for this roll
+    const result = await window.api.rolls.photos(roll.id, { page: 1, pageSize: 9999, filters: {}, sortBy: 'shot_date', sortOrder: 'asc' }) as { rows: { id: number }[] }
+    const photoIds = result.rows.map((p) => p.id)
+    if (photoIds.length === 0) { setLocationPopoverOpen(false); return }
+    await window.api.locations.setForPhotos(photoIds, loc.id)
+    setLocationPopoverOpen(false)
+    onLocationChanged?.()
+  }
+
+  const handleClearLocation = async () => {
+    const result = await window.api.rolls.photos(roll.id, { page: 1, pageSize: 9999, filters: {}, sortBy: 'shot_date', sortOrder: 'asc' }) as { rows: { id: number }[] }
+    const photoIds = result.rows.map((p) => p.id)
+    if (photoIds.length > 0) await window.api.locations.clearForPhotos(photoIds)
+    setLocationPopoverOpen(false)
+    onLocationChanged?.()
+  }
+
+  const locationPopoverContent = (
+    <div style={{ width: 280 }} onClick={(e) => e.stopPropagation()}>
+      {roll.location_name && (
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+            <span style={{ color: '#888', fontSize: 11 }}>当前地点</span>
+            <button
+              style={{ background: 'transparent', border: 'none', color: '#555', cursor: 'pointer', fontSize: 11, padding: 0 }}
+              onClick={handleClearLocation}
+            >
+              <CloseOutlined style={{ marginRight: 2 }} />清除
+            </button>
+          </div>
+          <div style={{ background: '#222', borderRadius: 4, padding: '4px 8px', color: '#ccc', fontSize: 12, display: 'flex', alignItems: 'center', gap: 4 }}>
+            <EnvironmentOutlined style={{ color: '#c8832a', fontSize: 11 }} />
+            {roll.location_name}
+          </div>
+          <div style={{ color: '#555', fontSize: 11, marginTop: 6, marginBottom: 4 }}>更换地点</div>
+        </div>
+      )}
+      <LocationPicker onSelect={handleSetLocation} placeholder="搜索并设置地点..." />
+    </div>
+  )
 
   return (
     <div
@@ -293,6 +340,24 @@ function RollCard({
           style={{ display: 'flex', gap: 4, marginTop: 6, justifyContent: 'flex-end' }}
           onClick={(e) => e.stopPropagation()}
         >
+          <Popover
+            content={locationPopoverContent}
+            title={<span style={{ color: '#aaa', fontSize: 12 }}>设置拍摄地点</span>}
+            trigger="click"
+            open={locationPopoverOpen}
+            onOpenChange={(v) => setLocationPopoverOpen(v)}
+            overlayStyle={{ zIndex: 2000 }}
+            overlayInnerStyle={{ background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 8 }}
+          >
+            <Tooltip title="设置地点">
+              <button
+                style={{ background: 'transparent', border: 'none', color: roll.location_name ? '#c8832a' : '#555', cursor: 'pointer', padding: '2px 4px', fontSize: 12 }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <EnvironmentOutlined />
+              </button>
+            </Tooltip>
+          </Popover>
           <Tooltip title="重命名">
             <button
               style={{ background: 'transparent', border: 'none', color: '#555', cursor: 'pointer', padding: '2px 4px', fontSize: 12 }}

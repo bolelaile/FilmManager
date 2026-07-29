@@ -2,7 +2,7 @@
 
 面向胶片摄影爱好者的本地桌面应用，用于管理胶片扫描文件。
 
-**当前版本：** 1.1.11 · **平台：** Windows x64
+**当前版本：** 1.1.12 · **平台：** Windows x64
 
 ---
 
@@ -356,6 +356,7 @@ FilmManager/
 | 1.1.9 | 左侧筛选面板联动计数：有筛选条件时，其他属性子栏只显示当前筛选结果中存在的属性值（faceted search）；BMP 格式预览与缩略图修复（改用纯 JS BMP 解码器直接提取 RGB 像素数据，兼容所有 Windows 环境，同时对库中已有的缺失缩略图在打开时自动重新生成）；补充胶卷类别（新增 ADOX、AGFA、Alien Film、AMBER、CANDIDO、Cinestill、ClearCreek、Crystal Film、Cyberpunk、DisCamera、FOMAPAN、Fuji 全系、Fun Vision、HARMAN、HITCHCOCK、Rollei 全系等共 234 种胶卷预设图标）；大视图悬停预览面板：大视图右侧新增固定宽度预览区，鼠标悬停照片后立即显示缩略图并在 280 ms 防抖后加载全分辨率预览，面板下方按行展示文件名、格式、尺寸、大小、拍摄日期、入库日期及所有已标注属性 |
 | 1.1.10 | 地点功能完善：① 地点地图默认显示以中国为主视图的世界地图，有已导入地点时自动 fitBounds 调整视角；② 地图钉点击后侧栏展示该地点照片缩略图及拍摄日期；③ 地点选择器新增地图选点模式——点击地图标志按钮后展开内嵌 Leaflet 地图，点击或拖拽标记可自动调用 Nominatim 反向地理编码识别附近地名，支持编辑确认后保存；④ 全屏预览侧栏底部新增"拍摄地点"编辑区，可为单张照片添加/删除地点；⑤ 卷视图卡片操作栏新增地点按钮，点击后弹出地点选择器，可批量为该卷所有照片设置或清除拍摄地点 |
 | 1.1.11 | 外部软件联动：① 全屏预览标题栏新增"用其他应用打开"按钮（方格图标），点击后展开已检测到的图像处理软件列表，选择后立即以当前照片路径启动对应软件；② 照片网格右键菜单新增"用其他应用打开"条目，鼠标悬停后右侧弹出软件子菜单，支持批量多选后一次性向目标软件传入所有已选照片路径；③ 应用检测覆盖：Adobe Photoshop / Lightroom Classic / Lightroom、GIMP、Capture One、RawTherapee、darktable、IrfanView、Paint.NET、FastStone Image Viewer、XnViewMP、ACDSee、Affinity Photo、像素蛋糕（Polarr）、Luminar Neo / AI、ON1 Photo RAW、DxO PhotoLab、Corel PaintShop Pro 等；通过扫描常见安装目录与 Windows 注册表 App Paths 自动定位实际可执行文件 |
+| 1.1.12 | 稳定性修复：① 修复筛选条件切换时照片网格出现空白的 race condition——改用单调递增 loadCounterRef 替换布尔锁，filter 变化触发的重置请求不再被正在执行的分页请求静默丢弃；② 新增用户操作安全刷新机制，监听 mouseup / keyup 事件，用户停止操作 800 ms 后自动执行一次照片列表硬刷新，确保任何交互后图库始终显示最新数据；③ 修复地点地图视图打开后显示全黑的问题——Ant Design Modal 进场动画期间容器尺寸为 0，导致 Leaflet 无法正确请求瓦片，现通过 afterOpenChange 回调与 200 ms 兜底定时器双重触发 invalidateSize()，动画结束后地图自动补全瓦片渲染 |
 
 ---
 

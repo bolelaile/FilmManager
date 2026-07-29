@@ -96,6 +96,10 @@ export default function MapView({ open, onClose }: MapViewProps) {
       leafletMap.current = map
       markersRef.current = []
 
+      // Leaflet reads container size at init time; if the Modal is still animating
+      // the size may be 0. Force a re-layout once the paint settles.
+      setTimeout(() => { if (!map.getContainer().isConnected) return; map.invalidateSize() }, 200)
+
       // add markers
       if (mapData.locations.length > 0) {
         const bounds: [number, number][] = []
@@ -206,6 +210,13 @@ export default function MapView({ open, onClose }: MapViewProps) {
       width="90vw"
       style={{ top: 20, maxWidth: 1200 }}
       mask={false}
+      afterOpenChange={(visible) => {
+        // Called after the open animation finishes — the container now has its real
+        // dimensions, so tell Leaflet to recalculate tile coverage.
+        if (visible && leafletMap.current) {
+          leafletMap.current.invalidateSize()
+        }
+      }}
       styles={{
         content: { background: '#141414', border: '1px solid #353535', boxShadow: '0 8px 40px rgba(0,0,0,0.85)', padding: 0 },
         body: { padding: 0 }

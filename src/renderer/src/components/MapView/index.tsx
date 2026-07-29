@@ -1,25 +1,42 @@
 /**
  * MapView — 显示所有有照片标记的地点，点击地标查看该地点照片
  * 使用 MapLibre GL JS（WebGL canvas 渲染，不依赖 CSS 层叠，兼容 Electron Modal）
+ * 支持多瓦片源自动轮换（OSM → OSM.de → Esri），提升弱网可用性
  */
 import React, { useEffect, useState, useRef, useCallback } from 'react'
-import { Modal, Button, Spin, Empty } from 'antd'
-import { CloseOutlined, EnvironmentOutlined, LeftOutlined } from '@ant-design/icons'
+import { Modal, Button, Spin, Empty, message } from 'antd'
+import { CloseOutlined, EnvironmentOutlined, LeftOutlined, ReloadOutlined } from '@ant-design/icons'
 import * as maplibregl from 'maplibre-gl'
 import type { Location, Photo } from '../../types'
 
-// OSM 栅格瓦片样式（自包含，无需外部 style.json URL）
-const OSM_STYLE: maplibregl.StyleSpecification = {
-  version: 8,
-  sources: {
-    osm: {
-      type: 'raster',
-      tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
-      tileSize: 256,
-      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-    }
+// 多瓦片源（按优先级排列，自动轮换）
+const TILE_SOURCES = [
+  {
+    name: 'OpenStreetMap',
+    tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
   },
-  layers: [{ id: 'osm-tiles', type: 'raster', source: 'osm', minzoom: 0, maxzoom: 19 }]
+  {
+    name: 'OpenStreetMap.de',
+    tiles: ['https://tile.openstreetmap.de/{z}/{x}/{y}.png'],
+    attribution: '© OpenStreetMap contributors'
+  },
+  {
+    name: 'Esri World Street Map',
+    tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}'],
+    attribution: 'Tiles © Esri'
+  }
+] as const
+
+function makeStyle(sourceIndex: number): maplibregl.StyleSpecification {
+  const src = TILE_SOURCES[sourceIndex]
+  return {
+    version: 8,
+    sources: {
+      osm: { type: 'raster', tiles: [...src.tiles], tileSize: 256, attribution: src.attribution }
+    },
+    layers: [{ id: 'osm-tiles', type: 'raster', source: 'osm', minzoom: 0, maxzoom: 19 }]
+  }
 }
 
 interface MapLocation extends Location {
@@ -40,11 +57,15 @@ export default function MapView({ open, onClose }: MapViewProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<maplibregl.Map | null>(null)
   const markersRef = useRef<maplibregl.Marker[]>([])
+  const sourceIndexRef = useRef(0)
+  const tileErrorCountRef = useRef(0)
+  const stallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [mapData, setMapData] = useState<MapData | null>(null)
   const [loading, setLoading] = useState(false)
   const [selectedLoc, setSelectedLoc] = useState<MapLocation | null>(null)
   const [locPhotos, setLocPhotos] = useState<Photo[]>([])
   const [loadingPhotos, setLoadingPhotos] = useState(false)
+  const [tileSource, setTileSource] = useState(0)   // for display only
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -81,21 +102,37 @@ export default function MapView({ open, onClose }: MapViewProps) {
     }
   }, [])
 
-  // 初始化地图（数据加载完成后）
+  // 切换到下一个瓦片源
+  const switchToNextSource = useCallback((map: maplibregl.Map) => {
+    if (sourceIndexRef.current >= TILE_SOURCES.length - 1) return
+    sourceIndexRef.current++
+    tileErrorCountRef.current = 0
+    setTileSource(sourceIndexRef.current)
+    const src = TILE_SOURCES[sourceIndexRef.current]
+    message.info(`切换地图源: ${src.name}`, 2)
+    try {
+      if (map.getLayer('osm-tiles')) map.removeLayer('osm-tiles')
+      if (map.getSource('osm')) map.removeSource('osm')
+      map.addSource('osm', { type: 'raster', tiles: [...src.tiles], tileSize: 256, attribution: src.attribution })
+      map.addLayer({ id: 'osm-tiles', type: 'raster', source: 'osm', minzoom: 0, maxzoom: 19 })
+    } catch { /* map may be in transition */ }
+  }, [])
+
+  // 初始化地图
   useEffect(() => {
     if (!open || !mapData || !mapContainerRef.current) return
 
-    // 销毁旧实例
-    if (mapRef.current) {
-      mapRef.current.remove()
-      mapRef.current = null
-    }
+    if (mapRef.current) { mapRef.current.remove(); mapRef.current = null }
     markersRef.current = []
+    sourceIndexRef.current = 0
+    tileErrorCountRef.current = 0
+    setTileSource(0)
+    if (stallTimerRef.current) { clearTimeout(stallTimerRef.current); stallTimerRef.current = null }
 
     const map = new maplibregl.Map({
       container: mapContainerRef.current,
-      style: OSM_STYLE,
-      center: [105, 35.5],   // [lng, lat] — MapLibre 使用经度优先
+      style: makeStyle(0),
+      center: [105, 35.5],
       zoom: 3,
       attributionControl: false
     })
@@ -103,39 +140,48 @@ export default function MapView({ open, onClose }: MapViewProps) {
     map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right')
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right')
 
+    // 瓦片错误超阈值 → 自动切换源
+    map.on('error', () => {
+      tileErrorCountRef.current++
+      if (tileErrorCountRef.current >= 3) switchToNextSource(map)
+    })
+
+    // 25 秒未出现瓦片 → 判定为卡死，切换源
+    stallTimerRef.current = setTimeout(() => {
+      if (!map.areTilesLoaded()) switchToNextSource(map)
+    }, 25000)
+
+    map.on('tilesloaded', () => {
+      if (stallTimerRef.current) { clearTimeout(stallTimerRef.current); stallTimerRef.current = null }
+      tileErrorCountRef.current = 0
+    })
+
     mapRef.current = map
 
     map.on('load', () => {
       if (!mapData.locations.length) return
-
       const bounds = new maplibregl.LngLatBounds()
 
       for (const loc of mapData.locations) {
-        const count = loc.photo_count
-
-        // 自定义标记 DOM 元素
         const el = document.createElement('div')
         el.style.cursor = 'pointer'
         el.innerHTML = `
-          <div style="
-            display:flex;flex-direction:column;align-items:center;
-          ">
+          <div style="display:flex;flex-direction:column;align-items:center;">
             <div style="
               background:#c8832a;color:#fff;border-radius:50%;
               width:32px;height:32px;
               display:flex;align-items:center;justify-content:center;
               font-size:13px;font-weight:600;
               box-shadow:0 2px 8px rgba(0,0,0,0.5);border:2px solid #fff;
-            ">${count}</div>
+            ">${loc.photo_count}</div>
             <div style="
               width:0;height:0;
               border-left:6px solid transparent;
               border-right:6px solid transparent;
-              border-top:8px solid #c8832a;
-              margin-top:-1px;
+              border-top:8px solid #c8832a;margin-top:-1px;
             "></div>
-          </div>
-        `
+          </div>`
+        el.title = loc.name
         el.addEventListener('click', () => handleMarkerClick(loc))
 
         const marker = new maplibregl.Marker({ element: el, anchor: 'bottom' })
@@ -152,26 +198,19 @@ export default function MapView({ open, onClose }: MapViewProps) {
     })
   }, [open, mapData])
 
-  // Modal 关闭时销毁地图
+  // 关闭时销毁
   useEffect(() => {
-    if (!open && mapRef.current) {
-      mapRef.current.remove()
-      mapRef.current = null
-      markersRef.current = []
+    if (!open) {
+      if (stallTimerRef.current) { clearTimeout(stallTimerRef.current); stallTimerRef.current = null }
+      if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; markersRef.current = [] }
     }
   }, [open])
 
-  // Modal 动画结束后调用 resize()，确保 WebGL canvas 取到正确尺寸
   const handleAfterOpenChange = useCallback((visible: boolean) => {
-    if (visible && mapRef.current) {
-      mapRef.current.resize()
-    }
+    if (visible && mapRef.current) mapRef.current.resize()
   }, [])
 
-  const handleBack = () => {
-    setSelectedLoc(null)
-    setLocPhotos([])
-  }
+  const handleBack = () => { setSelectedLoc(null); setLocPhotos([]) }
 
   return (
     <Modal
@@ -192,18 +231,19 @@ export default function MapView({ open, onClose }: MapViewProps) {
           <EnvironmentOutlined style={{ color: '#c8832a' }} />
           <span>地点地图</span>
           {mapData && <span style={{ color: '#555', fontSize: 12 }}>· {mapData.locations.length} 个地点</span>}
+          {tileSource > 0 && (
+            <span style={{ color: '#666', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}>
+              <ReloadOutlined style={{ fontSize: 10 }} />
+              {TILE_SOURCES[tileSource].name}
+            </span>
+          )}
         </div>
       }
     >
       <div style={{ display: 'flex', height: '75vh' }}>
-        {/* 地图区域 */}
         <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
           {loading && (
-            <div style={{
-              position: 'absolute', inset: 0, zIndex: 10,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              background: '#141414'
-            }}>
+            <div style={{ position: 'absolute', inset: 0, zIndex: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#141414' }}>
               <Spin size="large" />
             </div>
           )}
@@ -211,8 +251,7 @@ export default function MapView({ open, onClose }: MapViewProps) {
             <div style={{
               position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)',
               zIndex: 10, background: 'rgba(20,20,20,0.85)', borderRadius: 8,
-              padding: '8px 16px', color: '#666', fontSize: 12,
-              pointerEvents: 'none', whiteSpace: 'nowrap'
+              padding: '8px 16px', color: '#666', fontSize: 12, pointerEvents: 'none', whiteSpace: 'nowrap'
             }}>
               暂无地点数据 — 在照片详情中为照片添加拍摄地点
             </div>
@@ -220,16 +259,8 @@ export default function MapView({ open, onClose }: MapViewProps) {
           <div ref={mapContainerRef} style={{ width: '100%', height: '100%' }} />
         </div>
 
-        {/* 右侧面板：选中地点后展示 */}
         {selectedLoc && (
-          <div style={{
-            width: 320,
-            borderLeft: '1px solid #252525',
-            background: '#181818',
-            display: 'flex',
-            flexDirection: 'column',
-            overflow: 'hidden'
-          }}>
+          <div style={{ width: 320, borderLeft: '1px solid #252525', background: '#181818', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             <div style={{ padding: '12px 16px', borderBottom: '1px solid #252525', display: 'flex', alignItems: 'center', gap: 8 }}>
               <Button size="small" type="text" icon={<LeftOutlined />} onClick={handleBack} style={{ color: '#888', padding: 0 }} />
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -245,9 +276,7 @@ export default function MapView({ open, onClose }: MapViewProps) {
 
             <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
               {loadingPhotos ? (
-                <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}>
-                  <Spin size="small" />
-                </div>
+                <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spin size="small" /></div>
               ) : locPhotos.length === 0 ? (
                 <Empty description={<span style={{ color: '#555' }}>暂无照片</span>} />
               ) : (
@@ -258,11 +287,8 @@ export default function MapView({ open, onClose }: MapViewProps) {
                       <div key={photo.id} style={{ display: 'flex', flexDirection: 'column' }}>
                         <div style={{ aspectRatio: '1', background: '#111', borderRadius: 4, overflow: 'hidden' }}>
                           {photo.thumb_ready && photo.thumb_path ? (
-                            <img
-                              src={`localfile://${encodeURIComponent(photo.thumb_path)}`}
-                              alt={photo.original_name}
-                              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                            />
+                            <img src={`localfile://${encodeURIComponent(photo.thumb_path)}`} alt={photo.original_name}
+                              style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                           ) : (
                             <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#333', fontSize: 10 }}>
                               {photo.file_type.toUpperCase()}

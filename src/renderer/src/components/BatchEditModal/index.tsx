@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react'
-import { Modal, Select, Button, Space, Divider, message } from 'antd'
-import { PlusOutlined, PictureOutlined } from '@ant-design/icons'
-import type { AttributeType, AttributeValue } from '../../types'
+import { Modal, Select, Button, Space, Divider, message, Segmented } from 'antd'
+import { CloseCircleOutlined, EnvironmentOutlined, PlusOutlined, PictureOutlined } from '@ant-design/icons'
+import type { AttributeType, AttributeValue, Location } from '../../types'
 import { FilmTag, FilmIconPicker } from '../FilmIcon'
+import LocationPicker from '../LocationPicker'
 
 interface BatchEditModalProps {
   open: boolean
@@ -13,6 +14,7 @@ interface BatchEditModalProps {
 }
 
 const normalize = (s: string) => s.replace(/\s+/g, '').toLowerCase()
+type LocationEditMode = 'skip' | 'set' | 'clear'
 
 export default function BatchEditModal({ open, selectedIds, attrTypes, onClose, onDone }: BatchEditModalProps) {
   // typeId -> selected valueId (null = skip this type)
@@ -22,6 +24,8 @@ export default function BatchEditModal({ open, selectedIds, attrTypes, onClose, 
   const [filmValues, setFilmValues] = useState<AttributeValue[]>([])
   const [filmTypeId, setFilmTypeId] = useState<number | null>(null)
   const [filmPickerOpen, setFilmPickerOpen] = useState(false)
+  const [locationEditMode, setLocationEditMode] = useState<LocationEditMode>('skip')
+  const [selectedLocation, setSelectedLocation] = useState<Location | null>(null)
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
@@ -29,6 +33,8 @@ export default function BatchEditModal({ open, selectedIds, attrTypes, onClose, 
       setEdits({})
       setExtraValues({})
       setSearchTexts({})
+      setLocationEditMode('skip')
+      setSelectedLocation(null)
     }
   }, [open])
 
@@ -45,15 +51,27 @@ export default function BatchEditModal({ open, selectedIds, attrTypes, onClose, 
       .filter(([, v]) => v !== null)
       .map(([typeId, valueId]) => ({ typeId: Number(typeId), valueId: valueId! }))
 
-    if (attrPairs.length === 0) {
-      message.warning('请至少设置一个属性')
+    if (locationEditMode === 'set' && !selectedLocation) {
+      message.warning('请选择拍摄地点')
+      return
+    }
+
+    if (attrPairs.length === 0 && locationEditMode === 'skip') {
+      message.warning('请至少设置一个属性或拍摄地点')
       return
     }
 
     setSaving(true)
     try {
-      await window.api.photos.batchSetAttributes(selectedIds, attrPairs)
-      message.success(`已更新 ${selectedIds.length} 张照片的属性`)
+      if (attrPairs.length > 0) {
+        await window.api.photos.batchSetAttributes(selectedIds, attrPairs)
+      }
+      if (locationEditMode === 'set') {
+        await window.api.locations.setForPhotos(selectedIds, selectedLocation!.id)
+      } else if (locationEditMode === 'clear') {
+        await window.api.locations.setForPhotos(selectedIds, null)
+      }
+      message.success(`已更新 ${selectedIds.length} 张照片的信息`)
       onDone()
     } finally {
       setSaving(false)
@@ -65,7 +83,7 @@ export default function BatchEditModal({ open, selectedIds, attrTypes, onClose, 
   return (
     <>
       <Modal
-        title={`批量编辑属性（${selectedIds.length} 张照片）`}
+        title={`编辑照片信息（${selectedIds.length} 张照片）`}
         open={open}
         onCancel={onClose}
         footer={
@@ -86,11 +104,12 @@ export default function BatchEditModal({ open, selectedIds, attrTypes, onClose, 
         styles={{
           content: { background: '#1a1a1a', border: '1px solid #353535', boxShadow: '0 8px 40px rgba(0,0,0,0.85)' },
           header: { background: '#1a1a1a', borderBottom: '1px solid #252525' },
-          footer: { background: '#1a1a1a', borderTop: '1px solid #252525' }
+          footer: { background: '#1a1a1a', borderTop: '1px solid #252525' },
+          body: { maxHeight: '65vh', overflowY: 'auto' }
         }}
       >
         <div style={{ color: '#666', fontSize: 12, marginBottom: 16 }}>
-          留空的属性将不会修改；已填写的属性将覆盖所有选中照片的对应属性。
+          留空的属性不会修改；已填写的内容将覆盖所有选中照片的对应信息。
         </div>
 
         {visibleTypes.map((type) => {
@@ -172,6 +191,65 @@ export default function BatchEditModal({ open, selectedIds, attrTypes, onClose, 
             </div>
           )
         })}
+
+        <Divider style={{ borderColor: '#2a2a2a', margin: '16px 0 12px' }} />
+        <div style={{ marginBottom: 4 }}>
+          <div style={{ color: '#888', fontSize: 12, marginBottom: 6 }}>拍摄地点</div>
+          <Segmented
+            block
+            value={locationEditMode}
+            options={[
+              { label: '不修改', value: 'skip' },
+              { label: '设置或更换', value: 'set' },
+              { label: '清除', value: 'clear' }
+            ]}
+            onChange={(value) => {
+              const mode = value as LocationEditMode
+              setLocationEditMode(mode)
+              if (mode !== 'set') setSelectedLocation(null)
+            }}
+          />
+
+          {locationEditMode === 'set' && (
+            <div style={{ marginTop: 8 }}>
+              {selectedLocation ? (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 8, minHeight: 36,
+                  padding: '6px 10px', background: '#222', border: '1px solid #c8832a', borderRadius: 6
+                }}>
+                  <EnvironmentOutlined style={{ color: '#c8832a', flexShrink: 0 }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ color: '#ddd', fontSize: 13 }}>{selectedLocation.name}</div>
+                    {selectedLocation.address && (
+                      <div style={{ color: '#666', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {selectedLocation.address}
+                      </div>
+                    )}
+                  </div>
+                  <Button
+                    size="small"
+                    type="text"
+                    title="重新选择地点"
+                    icon={<CloseCircleOutlined />}
+                    onClick={() => setSelectedLocation(null)}
+                    style={{ color: '#666', padding: 0, flexShrink: 0 }}
+                  />
+                </div>
+              ) : (
+                <LocationPicker
+                  placeholder="搜索要设置的拍摄地点..."
+                  onSelect={setSelectedLocation}
+                />
+              )}
+            </div>
+          )}
+
+          {locationEditMode === 'clear' && (
+            <div style={{ marginTop: 7, color: '#d89673', fontSize: 11 }}>
+              将移除所选照片现有的拍摄地点
+            </div>
+          )}
+        </div>
       </Modal>
 
       {filmTypeId && (

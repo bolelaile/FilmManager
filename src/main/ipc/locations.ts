@@ -63,15 +63,15 @@ export function registerLocationsIpc(): void {
       .all(photoId)
   })
 
-  // 批量为照片设置地点（先清除旧地点，再写入新地点）
-  ipcMain.handle('locations:setForPhotos', (_, photoIds: number[], locationId: number) => {
+  // 批量为照片设置地点（先清除旧地点，再写入新地点；locationId 为 null 时仅清除）
+  ipcMain.handle('locations:setForPhotos', (_, photoIds: number[], locationId: number | null) => {
     const db = getDb()
     const del = db.prepare('DELETE FROM photo_locations WHERE photo_id = ?')
     const ins = db.prepare('INSERT OR IGNORE INTO photo_locations (photo_id, location_id) VALUES (?, ?)')
     const tx = db.transaction(() => {
       for (const id of photoIds) {
         del.run(id)
-        ins.run(id, locationId)
+        if (locationId !== null) ins.run(id, locationId)
       }
     })
     tx()

@@ -308,7 +308,7 @@ export default function FilterPanel({ attrTypes, valueCounts, subLibCounts, filt
         style={{ flex: 1 }}
       >
         {attrTypes.filter((type) => type.key !== 'imported_at').map((type) => {
-        const selectedForType = filter.filters[type.id] ?? []
+          const selectedForType = filter.filters[type.id] ?? []
           const searchQuery = attrSearch[type.id] ?? ''
           const nq = normalize(searchQuery)
 

@@ -1,5 +1,6 @@
 /**
  * LocationPicker — 支持本地检索、在线搜索、经纬度手动录入、地图拖拽选点
+ * 地图部分使用 MapLibre GL JS 替代 Leaflet
  */
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { Input, Button, Spin, Empty, Divider, Space, Tooltip } from 'antd'
@@ -7,9 +8,22 @@ import {
   SearchOutlined, EnvironmentOutlined, PlusOutlined, LoadingOutlined,
   GlobalOutlined, AimOutlined, CloseOutlined, CheckOutlined
 } from '@ant-design/icons'
+import * as maplibregl from 'maplibre-gl'
 import type { Location, LocationSearchResult } from '../../types'
 
-let L: typeof import('leaflet') | null = null
+// OSM 栅格瓦片样式
+const OSM_STYLE: maplibregl.StyleSpecification = {
+  version: 8,
+  sources: {
+    osm: {
+      type: 'raster',
+      tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+      tileSize: 256,
+      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }
+  },
+  layers: [{ id: 'osm-tiles', type: 'raster', source: 'osm', minzoom: 0, maxzoom: 19 }]
+}
 
 // 规范化：去除空格、转小写，用于模糊匹配
 function normalize(s: string): string {
@@ -44,8 +58,8 @@ export default function LocationPicker({ onSelect, placeholder = '搜索或新�
   const [editingMapName, setEditingMapName] = useState('')
 
   const mapContainerRef = useRef<HTMLDivElement>(null)
-  const miniMapRef = useRef<import('leaflet').Map | null>(null)
-  const markerRef = useRef<import('leaflet').Marker | null>(null)
+  const miniMapRef = useRef<maplibregl.Map | null>(null)
+  const markerRef = useRef<maplibregl.Marker | null>(null)
   const reverseDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
@@ -54,16 +68,21 @@ export default function LocationPicker({ onSelect, placeholder = '搜索或新�
     })
   }, [])
 
-  // 懒加载 Leaflet
-  const initLeaflet = useCallback(async () => {
-    if (L) return
-    L = (await import('leaflet')).default
-    delete (L.Icon.Default.prototype as any)._getIconUrl
-    L.Icon.Default.mergeOptions({
-      iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-      iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-      shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png'
-    })
+  // 反向地理编码辅助
+  const doReverseGeocode = useCallback(async (lat: number, lng: number) => {
+    if (reverseDebounceRef.current) clearTimeout(reverseDebounceRef.current)
+    reverseDebounceRef.current = setTimeout(async () => {
+      setReverseLoading(true)
+      try {
+        const res = await window.api.locations.reverseGeocode(lat, lng) as { name: string; address: string } | null
+        if (res) {
+          setMapReverseResult(res)
+          setEditingMapName(res.name)
+        }
+      } finally {
+        setReverseLoading(false)
+      }
+    }, 300)
   }, [])
 
   // 挂载/卸载迷你地图
@@ -77,91 +96,63 @@ export default function LocationPicker({ onSelect, placeholder = '搜索或新�
       return
     }
 
-    let cancelled = false
-    initLeaflet().then(() => {
-      if (cancelled || !L || !mapContainerRef.current) return
-      if (miniMapRef.current) {
-        miniMapRef.current.remove()
-        miniMapRef.current = null
-      }
+    if (!mapContainerRef.current) return
 
-      const map = L.map(mapContainerRef.current, {
-        center: [mapPinLat, mapPinLng],
-        zoom: mapPinLat === 35.5 && mapPinLng === 105 ? 4 : 10,
-        zoomControl: true
-      })
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap contributors',
-        maxZoom: 18
-      }).addTo(map)
+    if (miniMapRef.current) {
+      miniMapRef.current.remove()
+      miniMapRef.current = null
+    }
 
-      // 橙色拖拽标
-      const icon = L!.divIcon({
-        html: `<div style="
-          width:24px;height:24px;background:#c8832a;border-radius:50% 50% 50% 0;
-          border:2px solid #fff;transform:rotate(-45deg);
-          box-shadow:0 2px 8px rgba(0,0,0,0.5);
-        "></div>`,
-        className: '',
-        iconSize: [24, 24],
-        iconAnchor: [12, 24],
-        popupAnchor: [0, -28]
-      })
+    // 橙色拖拽标记元素
+    const markerEl = document.createElement('div')
+    markerEl.innerHTML = `<div style="
+      width:22px;height:22px;background:#c8832a;
+      border-radius:50% 50% 50% 0;border:2px solid #fff;
+      transform:rotate(-45deg);
+      box-shadow:0 2px 8px rgba(0,0,0,0.5);
+    "></div>`
 
-      const marker = L!.marker([mapPinLat, mapPinLng], { icon, draggable: true }).addTo(map)
-      markerRef.current = marker
-      miniMapRef.current = map
+    const map = new maplibregl.Map({
+      container: mapContainerRef.current,
+      style: OSM_STYLE,
+      center: [mapPinLng, mapPinLat],   // [lng, lat]
+      zoom: mapPinLat === 35.5 && mapPinLng === 105 ? 3 : 10,
+      attributionControl: false
+    })
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right')
 
-      marker.on('dragend', () => {
-        const pos = marker.getLatLng()
-        setMapPinLat(pos.lat)
-        setMapPinLng(pos.lng)
-        setMapReverseResult(null)
-        setEditingMapName('')
-        if (reverseDebounceRef.current) clearTimeout(reverseDebounceRef.current)
-        reverseDebounceRef.current = setTimeout(async () => {
-          setReverseLoading(true)
-          try {
-            const res = await window.api.locations.reverseGeocode(pos.lat, pos.lng) as { name: string; address: string } | null
-            if (res) {
-              setMapReverseResult(res)
-              setEditingMapName(res.name)
-            }
-          } finally {
-            setReverseLoading(false)
-          }
-        }, 300)
-      })
+    const marker = new maplibregl.Marker({ element: markerEl, anchor: 'bottom', draggable: true })
+      .setLngLat([mapPinLng, mapPinLat])
+      .addTo(map)
 
-      // 点击地图也可以移动标记
-      map.on('click', (e: import('leaflet').LeafletMouseEvent) => {
-        marker.setLatLng(e.latlng)
-        setMapPinLat(e.latlng.lat)
-        setMapPinLng(e.latlng.lng)
-        setMapReverseResult(null)
-        setEditingMapName('')
-        if (reverseDebounceRef.current) clearTimeout(reverseDebounceRef.current)
-        reverseDebounceRef.current = setTimeout(async () => {
-          setReverseLoading(true)
-          try {
-            const res = await window.api.locations.reverseGeocode(e.latlng.lat, e.latlng.lng) as { name: string; address: string } | null
-            if (res) {
-              setMapReverseResult(res)
-              setEditingMapName(res.name)
-            }
-          } finally {
-            setReverseLoading(false)
-          }
-        }, 300)
-      })
+    marker.on('dragend', () => {
+      const pos = marker.getLngLat()
+      setMapPinLat(pos.lat)
+      setMapPinLng(pos.lng)
+      setMapReverseResult(null)
+      setEditingMapName('')
+      doReverseGeocode(pos.lat, pos.lng)
     })
 
+    map.on('click', (e: maplibregl.MapMouseEvent) => {
+      const { lng, lat } = e.lngLat
+      marker.setLngLat([lng, lat])
+      setMapPinLat(lat)
+      setMapPinLng(lng)
+      setMapReverseResult(null)
+      setEditingMapName('')
+      doReverseGeocode(lat, lng)
+    })
+
+    markerRef.current = marker
+    miniMapRef.current = map
+
     return () => {
-      cancelled = true
+      if (reverseDebounceRef.current) clearTimeout(reverseDebounceRef.current)
     }
   }, [showMap])
 
-  // 关闭地图时清理防抖定时器
+  // 清理反向地理编码防抖定时器
   useEffect(() => {
     return () => {
       if (reverseDebounceRef.current) clearTimeout(reverseDebounceRef.current)

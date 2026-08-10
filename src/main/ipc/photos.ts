@@ -52,7 +52,7 @@ export function registerPhotosIpc(): void {
           : 'p.imported_at'
       const dateColumn = dateField === 'shot_date' ? 'p.shot_date' : 'p.imported_at'
 
-      let sql = `SELECT DISTINCT p.* FROM photos p`
+      let fromClause = `FROM photos p`
       const args: unknown[] = []
       let joinIdx = 0
 
@@ -60,7 +60,7 @@ export function registerPhotosIpc(): void {
       for (const [typeId, valueIds] of Object.entries(filters)) {
         if (!valueIds || (valueIds as number[]).length === 0) continue
         const alias = `pa${joinIdx++}`
-        sql += ` JOIN photo_attributes ${alias} ON ${alias}.photo_id = p.id AND ${alias}.attribute_type_id = ${typeId} AND ${alias}.attribute_value_id IN (${(valueIds as number[]).map(() => '?').join(',')})`
+        fromClause += ` JOIN photo_attributes ${alias} ON ${alias}.photo_id = p.id AND ${alias}.attribute_type_id = ${typeId} AND ${alias}.attribute_value_id IN (${(valueIds as number[]).map(() => '?').join(',')})`
         args.push(...(valueIds as number[]))
       }
 
@@ -102,14 +102,15 @@ export function registerPhotosIpc(): void {
         )`)
       }
 
-      if (wheres.length) sql += ' WHERE ' + wheres.join(' AND ')
-      sql += ` ORDER BY ${sortExpression} ${sortOrder === 'asc' ? 'ASC' : 'DESC'}`
+      if (wheres.length) fromClause += ' WHERE ' + wheres.join(' AND ')
 
-      const countSql = `SELECT COUNT(*) as total FROM (${sql}) t`
+      // COUNT 查询：COUNT(DISTINCT p.id) 避免子查询包裹的双重开销
+      const countSql = `SELECT COUNT(DISTINCT p.id) as total ${fromClause}`
       const total = (db.prepare(countSql).get(...args) as { total: number }).total
 
-      sql += ' LIMIT ? OFFSET ?'
-      const rows = db.prepare(sql).all(...args, pageSize, offset) as PhotoRow[]
+      // 数据查询：加 ORDER BY + LIMIT/OFFSET
+      const dataSql = `SELECT DISTINCT p.* ${fromClause} ORDER BY ${sortExpression} ${sortOrder === 'asc' ? 'ASC' : 'DESC'} LIMIT ? OFFSET ?`
+      const rows = db.prepare(dataSql).all(...args, pageSize, offset) as PhotoRow[]
 
       // 批量查询每张图的属性标签
       const ids = rows.map((r) => r.id)
@@ -185,18 +186,22 @@ export function registerPhotosIpc(): void {
     return { ...photo, attributes: attrs }
   })
 
-  // 更新照片属性（替换全部）
+  // 更新照片属性（替换全部，事务保证原子性）
   ipcMain.handle(
     'photos:setAttributes',
     (_, photoId: number, attrAssignments: { typeId: number; valueId: number }[]) => {
       const db = getDb()
-      db.prepare('DELETE FROM photo_attributes WHERE photo_id = ?').run(photoId)
-      const ins = db.prepare(
+      const delStmt = db.prepare('DELETE FROM photo_attributes WHERE photo_id = ?')
+      const insStmt = db.prepare(
         'INSERT OR IGNORE INTO photo_attributes (photo_id, attribute_type_id, attribute_value_id) VALUES (?, ?, ?)'
       )
-      for (const { typeId, valueId } of attrAssignments) {
-        ins.run(photoId, typeId, valueId)
-      }
+      // DELETE + INSERT 在同一事务内，任一失败则全部回滚
+      db.transaction(() => {
+        delStmt.run(photoId)
+        for (const { typeId, valueId } of attrAssignments) {
+          insStmt.run(photoId, typeId, valueId)
+        }
+      })()
       return true
     }
   )
@@ -244,18 +249,30 @@ export function registerPhotosIpc(): void {
     return true
   })
 
-  // 删除照片（从库和磁盘）
+  // 删除照片（先收集路径，事务原子删 DB，再删磁盘文件）
   ipcMain.handle('photos:delete', (_, ids: number[], deleteFile: boolean) => {
     const db = getDb()
-    for (const id of ids) {
-      if (deleteFile) {
-        const row = db.prepare('SELECT file_path, thumb_path FROM photos WHERE id = ?').get(id) as { file_path: string; thumb_path?: string } | undefined
-        if (row) {
-          try { fs.unlinkSync(row.file_path) } catch {}
-          if (row.thumb_path) try { fs.unlinkSync(row.thumb_path) } catch {}
-        }
+
+    // 先收集待删文件路径（DB 操作前查询，避免删后无法找到路径）
+    const filesToDelete: { file_path: string; thumb_path?: string }[] = []
+    if (deleteFile) {
+      const sel = db.prepare('SELECT file_path, thumb_path FROM photos WHERE id = ?')
+      for (const id of ids) {
+        const row = sel.get(id) as { file_path: string; thumb_path?: string } | undefined
+        if (row) filesToDelete.push(row)
       }
-      db.prepare('DELETE FROM photos WHERE id = ?').run(id)
+    }
+
+    // 事务原子性删除 DB 记录（任一失败则全部回滚）
+    const delStmt = db.prepare('DELETE FROM photos WHERE id = ?')
+    db.transaction(() => {
+      for (const id of ids) delStmt.run(id)
+    })()
+
+    // DB 提交成功后再删磁盘文件（文件删除失败不影响 DB 一致性）
+    for (const { file_path, thumb_path } of filesToDelete) {
+      try { fs.unlinkSync(file_path) } catch {}
+      if (thumb_path) try { fs.unlinkSync(thumb_path) } catch {}
     }
     return true
   })

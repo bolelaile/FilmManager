@@ -8,7 +8,8 @@ import {
   getImageMeta,
   getExifData,
   SUPPORTED_EXTENSIONS,
-  getFileType
+  getFileType,
+  computeContentHash
 } from '../services/thumbnail'
 import {
   ensureSubLibraryDirectory,
@@ -16,18 +17,9 @@ import {
   getOrCreateSubLibrary as getOrCreatePhysicalSubLibrary
 } from '../services/library-layout'
 import { getLibraryRoot, getThumbDir } from './index'
+import type { AutoOrganizeMode, ImportOptions } from '../../shared/import-types'
 
-export type AutoOrganizeMode = 'none' | 'year' | 'year-month' | 'camera' | 'film' | 'source-folder'
-
-export interface ImportOptions {
-  subLibraryId?: number
-  organizeBy?: AutoOrganizeMode
-  shotDate?: string | null
-  filmName?: string | null
-  cameraName?: string | null
-  lensName?: string | null
-  autoCreateEquipment?: boolean
-}
+export type { AutoOrganizeMode, ImportOptions }
 
 // ── types ────────────────────────────────────────────────────────────────────
 
@@ -294,7 +286,7 @@ export function registerImportIpc(): void {
     for (const entry of entries) {
       if (!entry.isDirectory()) continue
       const folderPath = path.join(rootPath, entry.name)
-      const files = walkDirect(folderPath)
+      const files = walk(folderPath)
       if (files.length === 0) continue
 
       // Match child folder name (primary + alias)
@@ -342,7 +334,7 @@ export function registerImportIpc(): void {
     // Count total files
     let totalFiles = 0
     for (const cfg of configs) {
-      totalFiles += walkDirect(cfg.folderPath).length
+      totalFiles += walk(cfg.folderPath).length
     }
     event.sender.send('import:total', totalFiles)
 
@@ -350,7 +342,7 @@ export function registerImportIpc(): void {
     let globalSkipped = 0
 
     for (const cfg of configs) {
-      const files = walkDirect(cfg.folderPath)
+      const files = walk(cfg.folderPath)
       let imported = 0
       let skipped = 0
       const importedIds: number[] = []
@@ -450,6 +442,7 @@ export function registerImportIpc(): void {
 
 // ── internal helpers ─────────────────────────────────────────────────────────
 
+/** Walk a directory recursively, returning only supported image files. */
 function walk(dir: string): string[] {
   const files: string[] = []
   try {
@@ -463,11 +456,6 @@ function walk(dir: string): string[] {
     }
   } catch {}
   return files
-}
-
-/** Walk a single folder (recursive), returning only supported image files. */
-function walkDirect(dir: string): string[] {
-  return walk(dir)
 }
 
 async function importFolder(
@@ -504,6 +492,13 @@ async function importFile(sourcePath: string, options: ImportOptions): Promise<n
   let copiedPath: string | null = null
 
   try {
+    // ① 内容哈希去重：在任何 IO 操作之前检查
+    const contentHash = computeContentHash(sourcePath)
+    if (contentHash) {
+      const dup = db.prepare('SELECT id FROM photos WHERE content_hash = ?').get(contentHash)
+      if (dup) return null // 内容相同，跳过
+    }
+
     const meta = await getImageMeta(sourcePath)
     const exif = await getExifData(sourcePath)
     const effectiveShotDate = options.shotDate ?? exif.shotDate
@@ -522,8 +517,8 @@ async function importFile(sourcePath: string, options: ImportOptions): Promise<n
 
     const info = db
       .prepare(
-        `INSERT INTO photos (file_path, original_name, file_type, width, height, file_size, sub_library_id, shot_date)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO photos (file_path, original_name, file_type, width, height, file_size, sub_library_id, shot_date, content_hash)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         finalDest,
@@ -533,7 +528,8 @@ async function importFile(sourcePath: string, options: ImportOptions): Promise<n
         meta?.height ?? null,
         stat.size,
         targetSubLibraryId ?? null,
-        effectiveShotDate ?? null
+        effectiveShotDate ?? null,
+        contentHash ?? null
       )
 
     const photoId = info.lastInsertRowid as number

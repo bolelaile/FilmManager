@@ -27,6 +27,32 @@ export function normalizeRotation(rotation: number): 0 | 90 | 180 | 270 {
   return normalized as 0 | 90 | 180 | 270
 }
 
+/**
+ * 计算文件内容指纹：MD5(文件大小字节串 + 文件前 64KB 内容)
+ * 速度快（无需读取完整文件），重复率极低，适合导入时快速去重。
+ * 若读取失败则返回 null（不阻断导入流程）。
+ */
+export function computeContentHash(filePath: string): string | null {
+  let fd: number | null = null
+  try {
+    const stat = fs.statSync(filePath)
+    const sampleSize = Math.min(65536, stat.size)
+    // 使用 alloc（清零）而非 allocUnsafe，避免部分读取时哈希混入未初始化内存
+    const buffer = Buffer.alloc(sampleSize)
+    fd = fs.openSync(filePath, 'r')
+    fs.readSync(fd, buffer, 0, sampleSize, 0)
+    return createHash('md5')
+      .update(String(stat.size))
+      .update(buffer)
+      .digest('hex')
+  } catch {
+    return null
+  } finally {
+    // 无论 readSync 是否抛出，fd 都会被关闭
+    if (fd !== null) try { fs.closeSync(fd) } catch {}
+  }
+}
+
 interface RawPixelData { buffer: Buffer; width: number; height: number; channels: 3 | 4 }
 
 /**

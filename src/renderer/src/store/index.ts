@@ -1,128 +1,24 @@
-import { create } from 'zustand'
-import type { AttributeType, FilterState, Photo, SubLibrary, IccProfile, Roll } from '../types'
+// 显式 import 而非重导出语法，确保在本模块体内有局部绑定可用
+import { useFilterStore } from './filterSlice'
+import { useLibraryStore } from './librarySlice'
+import { useUIStore } from './uiSlice'
 
-interface AppStore {
-  // 属性数据
-  attrTypes: AttributeType[]
-  setAttrTypes: (types: AttributeType[]) => void
+export { useFilterStore, useLibraryStore, useUIStore }
 
-  // 胶片图标缓存（iconKey -> dataURL）
-  filmIconCache: Record<string, string>
-  setFilmIconCache: (cache: Record<string, string>) => void
-  mergeFilmIconCache: (batch: Record<string, string>) => void
+/**
+ * 向后兼容的组合 hook：现有所有使用 useStore() 的组件无需改动。
+ * 新代码可直接按需订阅单个 store（useFilterStore / useLibraryStore / useUIStore），
+ * 以减少无关重渲染。
+ */
+export const useStore = () => ({
+  ...useFilterStore(),
+  ...useLibraryStore(),
+  ...useUIStore()
+})
 
-  // 子库
-  subLibraries: SubLibrary[]
-  setSubLibraries: (libs: SubLibrary[]) => void
-
-  // 筛选状态
-  filter: FilterState
-  setFilter: (f: Partial<FilterState>) => void
-  resetFilter: () => void
-
-  // 选中状态
-  selectedIds: Set<number>
-  toggleSelect: (id: number) => void
-  selectAll: (ids: number[]) => void
-  clearSelection: () => void
-
-  // 查看模式
-  thumbnailSize: 'small' | 'medium' | 'large'
-  setThumbnailSize: (s: 'small' | 'medium' | 'large') => void
-
-  // 视图模式：卷视图 or 单张照片视图
-  viewMode: 'rolls' | 'photos'
-  setViewMode: (m: 'rolls' | 'photos') => void
-
-  // 当前打开的卷（用于卷内照片视图）
-  activeRoll: Roll | null
-  setActiveRoll: (r: Roll | null) => void
-
-  // 全屏预览
-  viewerPhoto: Photo | null
-  setViewerPhoto: (p: Photo | null) => void
-  viewerPhotos: Photo[]
-  setViewerPhotos: (ps: Photo[]) => void
-  viewerIndex: number
-  setViewerIndex: (i: number) => void
-  closeViewer: () => void
-
-  // ICC 配置文件
-  iccProfiles: IccProfile[]
-  setIccProfiles: (p: IccProfile[]) => void
-  activeProfile: IccProfile | null
-  setActiveProfile: (p: IccProfile | null) => void
-
-  // 导入进度
-  importProgress: { total: number; imported: number; skipped: number } | null
-  setImportProgress: (p: { total: number; imported: number; skipped: number } | null) => void
-
-  // UI 状态
-  settingsOpen: boolean
-  setSettingsOpen: (v: boolean) => void
-  detailPhotoId: number | null
-  setDetailPhotoId: (id: number | null) => void
-}
-
-const defaultFilter: FilterState = {
-  filters: {},
-  dateField: 'imported_at',
-  sortBy: 'imported_at',
-  sortOrder: 'desc'
-}
-
-export const useStore = create<AppStore>((set) => ({
-  attrTypes: [],
-  setAttrTypes: (types) => set({ attrTypes: types }),
-
-  filmIconCache: {},
-  setFilmIconCache: (cache) => set({ filmIconCache: cache }),
-  mergeFilmIconCache: (batch) => set((s) => ({ filmIconCache: { ...s.filmIconCache, ...batch } })),
-
-  subLibraries: [],
-  setSubLibraries: (libs) => set({ subLibraries: libs }),
-
-  filter: defaultFilter,
-  setFilter: (f) => set((s) => ({ filter: { ...s.filter, ...f } })),
-  resetFilter: () => set({ filter: defaultFilter }),
-
-  selectedIds: new Set(),
-  toggleSelect: (id) =>
-    set((s) => {
-      const next = new Set(s.selectedIds)
-      next.has(id) ? next.delete(id) : next.add(id)
-      return { selectedIds: next }
-    }),
-  selectAll: (ids) => set({ selectedIds: new Set(ids) }),
-  clearSelection: () => set({ selectedIds: new Set() }),
-
-  thumbnailSize: 'medium',
-  setThumbnailSize: (s) => set({ thumbnailSize: s }),
-
-  viewMode: 'photos',
-  setViewMode: (m) => set({ viewMode: m }),
-
-  activeRoll: null,
-  setActiveRoll: (r) => set({ activeRoll: r }),
-
-  viewerPhoto: null,
-  setViewerPhoto: (p) => set({ viewerPhoto: p }),
-  viewerPhotos: [],
-  setViewerPhotos: (ps) => set({ viewerPhotos: ps }),
-  viewerIndex: 0,
-  setViewerIndex: (i) => set({ viewerIndex: i }),
-  closeViewer: () => set({ viewerPhoto: null, viewerPhotos: [], viewerIndex: 0 }),
-
-  iccProfiles: [],
-  setIccProfiles: (p) => set({ iccProfiles: p }),
-  activeProfile: null,
-  setActiveProfile: (p) => set({ activeProfile: p }),
-
-  importProgress: null,
-  setImportProgress: (p) => set({ importProgress: p }),
-
-  settingsOpen: false,
-  setSettingsOpen: (v) => set({ settingsOpen: v }),
-  detailPhotoId: null,
-  setDetailPhotoId: (id) => set({ detailPhotoId: id })
-}))
+// 允许直接读取 store 状态（不订阅）——兼容现有 useStore.getState() 调用
+useStore.getState = () => ({
+  ...useFilterStore.getState(),
+  ...useLibraryStore.getState(),
+  ...useUIStore.getState()
+})

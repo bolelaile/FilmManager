@@ -149,6 +149,13 @@ function runMigrations(): void {
     CREATE INDEX IF NOT EXISTS idx_photo_rolls_roll  ON photo_rolls(roll_id);
   `)
 
+  // 迁移：original_name 搜索索引（加速文件名 LIKE 查询）
+  try { db.exec(`CREATE INDEX IF NOT EXISTS idx_photos_original_name ON photos(original_name)`) } catch {}
+
+  // 迁移：content_hash 列（内容指纹，用于重复文件检测）
+  try { db.exec(`ALTER TABLE photos ADD COLUMN content_hash TEXT`) } catch {}
+  try { db.exec(`CREATE INDEX IF NOT EXISTS idx_photos_content_hash ON photos(content_hash)`) } catch {}
+
   seedDefaultData()
   try {
     seedChinaLocations()

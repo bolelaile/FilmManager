@@ -1,16 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type { AutoOrganizeMode, ImportOptions } from '../shared/import-types'
 
-export type AutoOrganizeMode = 'none' | 'year' | 'year-month' | 'camera' | 'film' | 'source-folder'
-
-export interface ImportOptions {
-  subLibraryId?: number
-  organizeBy?: AutoOrganizeMode
-  shotDate?: string | null
-  filmName?: string | null
-  cameraName?: string | null
-  lensName?: string | null
-  autoCreateEquipment?: boolean
-}
+export type { AutoOrganizeMode, ImportOptions }
 
 const api = {
   // 照片

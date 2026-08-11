@@ -34,6 +34,10 @@ const api = {
     onTotal: (cb: (total: number) => void) => {
       ipcRenderer.on('import:total', (_, total) => cb(total))
       return () => ipcRenderer.removeAllListeners('import:total')
+    },
+    onRegistered: (cb: (data: { count: number; total: number }) => void) => {
+      ipcRenderer.on('import:registered', (_, data) => cb(data))
+      return () => ipcRenderer.removeAllListeners('import:registered')
     }
   },
   // 属性

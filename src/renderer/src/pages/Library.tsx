@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { Layout, message, Modal, Input, Select } from 'antd'
 import { useFilterStore, useLibraryStore, useUIStore } from '../store'
 import type { SubLibrary } from '../types'
@@ -18,10 +18,11 @@ import AttrLibraryModal from '../components/AttrLibraryModal'
 import BatchEditModal from '../components/BatchEditModal'
 import RollsView from '../components/RollsView'
 import CreateRollModal from '../components/CreateRollModal'
+import ImportProgressBar from '../components/ImportProgressBar'
 
 export default function Library() {
   const { filter, selectedIds, clearSelection } = useFilterStore()
-  const { setIccProfiles, subLibraries } = useLibraryStore()
+  const { setIccProfiles, subLibraries, importProgress } = useLibraryStore()
   const {
     setViewerPhoto,
     setViewerPhotos,
@@ -79,6 +80,31 @@ export default function Library() {
   useEffect(() => {
     if (viewMode === 'rolls') setUnassignedOnly(false)
   }, [viewMode])
+
+  // ── 后台导入进行中：每 3 秒刷新一次图库（将 indexing 占位卡片替换为完成卡片）─────
+  const importPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  useEffect(() => {
+    if (importProgress && !importPollRef.current) {
+      importPollRef.current = setInterval(() => {
+        loadPhotos(true)
+        loadSubLibs()
+      }, 3000)
+    }
+    if (!importProgress && importPollRef.current) {
+      clearInterval(importPollRef.current)
+      importPollRef.current = null
+      // 最终刷新一次确保完成态
+      loadPhotos(true)
+      loadAttrs()
+      loadSubLibs()
+    }
+    return () => {
+      if (importPollRef.current) {
+        clearInterval(importPollRef.current)
+        importPollRef.current = null
+      }
+    }
+  }, [!!importProgress])
 
   // ── 事件处理 ─────────────────────────────────────────────────────────────────
   const handleOpenViewer = useCallback((photo: import('../types').Photo, index: number) => {
@@ -195,7 +221,7 @@ export default function Library() {
           onSubLibraryDeleted={() => { loadPhotos(true); loadSubLibs() }}
         />
 
-        <Layout.Content style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#141414' }}>
+        <Layout.Content style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#141414', position: 'relative' }}>
           {rollBreadcrumb}
 
           {showRollsView ? (
@@ -224,6 +250,8 @@ export default function Library() {
               onPhotoDeleted={() => { loadPhotos(true); loadAttrs(); loadSubLibs(); loadRolls() }}
             />
           )}
+
+          <ImportProgressBar />
         </Layout.Content>
       </Layout>
 

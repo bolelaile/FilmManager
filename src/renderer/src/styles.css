@@ -59,3 +59,10 @@ body {
 .leaflet-control-attribution a { color: #666 !important; }
 .leaflet-bar a { background: #222 !important; color: #ccc !important; border-color: #333 !important; }
 .leaflet-bar a:hover { background: #2a2a2a !important; }
+
+
+/* 导入占位卡片 shimmer 动画 */
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}

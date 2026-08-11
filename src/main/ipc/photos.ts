@@ -345,5 +345,5 @@ export function registerPhotosIpc(): void {
   })
 }
 
-interface PhotoRow { id: number; file_path: string; original_name: string; file_type: string; thumb_path?: string; thumb_ready: number; width?: number; height?: number; file_size?: number; sub_library_id?: number; imported_at: string; notes: string }
+interface PhotoRow { id: number; file_path: string; original_name: string; file_type: string; thumb_path?: string; thumb_ready: number; width?: number; height?: number; file_size?: number; sub_library_id?: number; imported_at: string; notes: string; storage_mode: string; import_status: string }
 interface AttrRow { photo_id: number; attribute_type_id: number; key: string; display_name: string; value: string; value_id: number }

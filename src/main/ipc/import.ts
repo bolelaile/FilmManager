@@ -206,10 +206,6 @@ export function registerImportIpc(): void {
 
   // 拖拽 / 路径导入（支持文件和文件夹混合）
   ipcMain.handle('import:importPaths', async (event, filePaths: string[], options: ImportOptions = {}) => {
-    let imported = 0
-    let skipped = 0
-    const importedIds: number[] = []
-
     const allFiles: string[] = []
     for (const p of filePaths) {
       try {
@@ -222,19 +218,7 @@ export function registerImportIpc(): void {
         }
       } catch {}
     }
-
-    event.sender.send('import:total', allFiles.length)
-    for (const filePath of allFiles) {
-      const photoId = await importFile(filePath, options)
-      if (photoId !== null) {
-        imported++
-        importedIds.push(photoId)
-      } else {
-        skipped++
-      }
-      event.sender.send('import:progress', { imported, skipped, total: allFiles.length })
-    }
-    return { imported, skipped, importedIds }
+    return runTwoPhaseImport(allFiles, options, event)
   })
 
   // ── 3. 扫描文件夹：枚举子文件夹，匹配属性 ────────────────────────────────
@@ -463,27 +447,176 @@ async function importFolder(
   options: ImportOptions,
   event: Electron.IpcMainInvokeEvent
 ): Promise<{ imported: number; skipped: number; importedIds: number[] }> {
-  let imported = 0
-  let skipped = 0
-  const importedIds: number[] = []
-
   const allFiles = walk(folderPath)
-  event.sender.send('import:total', allFiles.length)
-
-  for (const filePath of allFiles) {
-    const photoId = await importFile(filePath, options)
-    if (photoId !== null) {
-      imported++
-      importedIds.push(photoId)
-    } else {
-      skipped++
-    }
-    event.sender.send('import:progress', { imported, skipped, total: allFiles.length })
-  }
-  return { imported, skipped, importedIds }
+  return runTwoPhaseImport(allFiles, options, event)
 }
 
-// 返回新插入的 photo id，若跳过则返回 null
+// ── 两阶段导入核心 ────────────────────────────────────────────────────────────
+
+/**
+ * 两阶段导入入口：
+ * 阶段一 — 批量快速登记，立即通知前端文件总数，让图库刷新出占位卡片
+ * 阶段二 — 逐张后台处理（EXIF、拷贝、缩略图），每完成一张推送进度
+ */
+async function runTwoPhaseImport(
+  allFiles: string[],
+  options: ImportOptions,
+  event: Electron.IpcMainInvokeEvent
+): Promise<{ imported: number; skipped: number; importedIds: number[] }> {
+  const db = getDb()
+  const storageMode = options.storageMode ?? 'managed'
+
+  // ── 阶段一：快速登记 ──────────────────────────────────────────────────────
+  event.sender.send('import:total', allFiles.length)
+
+  const registrations: { photoId: number; sourcePath: string }[] = []
+  const registerStmt = db.prepare(`
+    INSERT OR IGNORE INTO photos
+      (file_path, original_name, file_type, file_size, sub_library_id, import_status, storage_mode)
+    VALUES (?, ?, ?, ?, ?, 'indexing', ?)
+  `)
+
+  db.transaction(() => {
+    for (const filePath of allFiles) {
+      try {
+        const stat = fs.statSync(filePath)
+        // linked 模式直接用原路径；managed 模式先用临时占位路径
+        const placeholderPath = storageMode === 'linked'
+          ? filePath
+          : `__pending__${Date.now()}_${Math.random().toString(36).slice(2)}_${path.basename(filePath)}`
+        const info = registerStmt.run(
+          placeholderPath,
+          path.basename(filePath),
+          getFileType(filePath),
+          stat.size,
+          options.subLibraryId ?? null,
+          storageMode
+        )
+        if (info.changes > 0) {
+          registrations.push({ photoId: info.lastInsertRowid as number, sourcePath: filePath })
+        }
+      } catch {}
+    }
+  })()
+
+  // 通知前端已登记（立即刷新图库出占位卡片）
+  event.sender.send('import:registered', { count: registrations.length, total: allFiles.length })
+
+  // 将任务写入队列
+  const insertQueue = db.prepare('INSERT INTO import_queue (source_path, photo_id, status) VALUES (?, ?, ?)')
+  const queueItems: { queueId: number; photoId: number; sourcePath: string }[] = []
+  db.transaction(() => {
+    for (const { photoId, sourcePath } of registrations) {
+      const info = insertQueue.run(sourcePath, photoId, 'pending')
+      queueItems.push({ queueId: info.lastInsertRowid as number, photoId, sourcePath })
+    }
+  })()
+
+  // ── 阶段二：后台逐张处理 ──────────────────────────────────────────────────
+  let done = 0
+  let skipped = allFiles.length - registrations.length // 文件路径已存在而被 IGNORE 的
+  const importedIds: number[] = []
+
+  for (const { queueId, photoId, sourcePath } of queueItems) {
+    await processQueueItem(queueId, photoId, sourcePath, options)
+
+    const qRow = db.prepare('SELECT status FROM import_queue WHERE id = ?').get(queueId) as { status: string }
+    if (qRow.status === 'done') {
+      done++
+      importedIds.push(photoId)
+    } else {
+      // skipped（内容重复）或 error
+      skipped++
+    }
+    event.sender.send('import:progress', { imported: done, skipped, total: allFiles.length })
+  }
+
+  return { imported: done, skipped, importedIds }
+}
+
+/**
+ * 阶段二：处理单个队列项——EXIF、拷贝（managed）、更新 DB、生成缩略图
+ */
+async function processQueueItem(
+  queueId: number,
+  photoId: number,
+  sourcePath: string,
+  options: ImportOptions
+): Promise<void> {
+  const db = getDb()
+  const storageMode = options.storageMode ?? 'managed'
+  const thumbDir = getThumbDir()
+  const filesRoot = path.join(getLibraryRoot(), 'files')
+
+  try {
+    // 内容哈希去重（快速登记时跳过，此处补做）
+    const contentHash = computeContentHash(sourcePath)
+    if (contentHash) {
+      const dup = db.prepare('SELECT id FROM photos WHERE content_hash = ? AND id != ?').get(contentHash, photoId)
+      if (dup) {
+        // 重复内容：删除占位记录
+        db.prepare('DELETE FROM photos WHERE id = ?').run(photoId)
+        db.prepare(`UPDATE import_queue SET status = 'skipped', done_at = datetime('now','localtime') WHERE id = ?`).run(queueId)
+        return
+      }
+    }
+
+    const meta = await getImageMeta(sourcePath)
+    const exif = await getExifData(sourcePath)
+    const effectiveShotDate = options.shotDate ?? exif.shotDate
+
+    let finalPath = sourcePath
+    let targetSubLibraryId: number | undefined | null = options.subLibraryId ?? null
+
+    if (storageMode === 'managed') {
+      targetSubLibraryId = resolveTargetSubLibrary(options, sourcePath, effectiveShotDate, exif.cameraModel, filesRoot)
+      const targetDirectory = ensureSubLibraryDirectory(db, filesRoot, targetSubLibraryId)
+      finalPath = ensureUniqueFilePath(path.join(targetDirectory, path.basename(sourcePath)))
+      fs.copyFileSync(sourcePath, finalPath)
+    }
+
+    // 将占位记录更新为完整记录
+    db.prepare(`
+      UPDATE photos SET
+        file_path = ?, width = ?, height = ?, shot_date = ?,
+        content_hash = ?, sub_library_id = ?, import_status = 'ready'
+      WHERE id = ?
+    `).run(
+      finalPath,
+      meta?.width ?? null,
+      meta?.height ?? null,
+      effectiveShotDate ?? null,
+      contentHash ?? null,
+      targetSubLibraryId ?? null,
+      photoId
+    )
+
+    const autoCreateEquipment = options.autoCreateEquipment !== false
+    assignEquipmentAttribute(photoId, 'camera', options.cameraName ?? exif.cameraModel, autoCreateEquipment)
+    assignEquipmentAttribute(photoId, 'lens', options.lensName ?? exif.lensModel, autoCreateEquipment)
+
+    db.prepare(`UPDATE import_queue SET status = 'done', done_at = datetime('now','localtime') WHERE id = ?`).run(queueId)
+
+    // 缩略图后台生成（不阻塞进度）
+    generateThumbnail(finalPath, thumbDir).then((thumbPath) => {
+      if (thumbPath) db.prepare('UPDATE photos SET thumb_path = ?, thumb_ready = 1 WHERE id = ?').run(thumbPath, photoId)
+    })
+  } catch (err) {
+    log.error('Queue item processing failed', sourcePath, err)
+    // managed 模式下如果文件已拷贝但 DB 更新失败，需撤销拷贝
+    if (storageMode === 'managed') {
+      const row = db.prepare('SELECT file_path FROM photos WHERE id = ?').get(photoId) as { file_path: string } | undefined
+      if (row?.file_path && row.file_path !== sourcePath) {
+        try { fs.unlinkSync(row.file_path) } catch {}
+      }
+    }
+    db.prepare(`UPDATE import_queue SET status = 'error', error_msg = ?, done_at = datetime('now','localtime') WHERE id = ?`)
+      .run(String(err), queueId)
+    db.prepare(`UPDATE photos SET import_status = 'error' WHERE id = ?`).run(photoId)
+  }
+}
+
+// 返回新插入的 photo id，若跳过则返回 null（保留旧接口，供 importRolls 使用）
 async function importFile(sourcePath: string, options: ImportOptions): Promise<number | null> {
   const db = getDb()
   const libraryRoot = getLibraryRoot()
@@ -517,8 +650,8 @@ async function importFile(sourcePath: string, options: ImportOptions): Promise<n
 
     const info = db
       .prepare(
-        `INSERT INTO photos (file_path, original_name, file_type, width, height, file_size, sub_library_id, shot_date, content_hash)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO photos (file_path, original_name, file_type, width, height, file_size, sub_library_id, shot_date, content_hash, storage_mode, import_status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'managed', 'ready')`
       )
       .run(
         finalDest,

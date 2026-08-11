@@ -156,6 +156,29 @@ function runMigrations(): void {
   try { db.exec(`ALTER TABLE photos ADD COLUMN content_hash TEXT`) } catch {}
   try { db.exec(`CREATE INDEX IF NOT EXISTS idx_photos_content_hash ON photos(content_hash)`) } catch {}
 
+  // 迁移：存储模式（managed = 复制到 library/files/；linked = 只记录原始路径）
+  try { db.exec(`ALTER TABLE photos ADD COLUMN storage_mode TEXT NOT NULL DEFAULT 'managed'`) } catch {}
+
+  // 迁移：导入状态（indexing = 占位中；ready = 完整可用；error = 处理失败）
+  try { db.exec(`ALTER TABLE photos ADD COLUMN import_status TEXT NOT NULL DEFAULT 'ready'`) } catch {}
+
+  // 迁移：导入任务队列（两阶段导入，后台处理追踪）
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS import_queue (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_path TEXT NOT NULL,
+        status      TEXT NOT NULL DEFAULT 'pending',
+        photo_id    INTEGER REFERENCES photos(id) ON DELETE CASCADE,
+        error_msg   TEXT,
+        queued_at   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        done_at     TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_import_queue_status   ON import_queue(status);
+      CREATE INDEX IF NOT EXISTS idx_import_queue_photo_id ON import_queue(photo_id);
+    `)
+  } catch {}
+
   seedDefaultData()
   try {
     seedChinaLocations()

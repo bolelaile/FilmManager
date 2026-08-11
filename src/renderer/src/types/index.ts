@@ -13,6 +13,8 @@ export interface Photo {
   shot_date?: string | null
   rotation: 0 | 90 | 180 | 270
   notes: string
+  storage_mode: 'managed' | 'linked'
+  import_status: 'indexing' | 'ready' | 'error'
   attributes: PhotoAttribute[]
 }
 

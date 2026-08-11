@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import {
   Modal, Button, Progress, Select, Space, Divider, DatePicker, Switch, Tooltip,
-  Tag, Input, message
+  Tag, Input, message, Radio
 } from 'antd'
 import {
   FolderOpenOutlined,
@@ -15,12 +15,15 @@ import {
   ApartmentOutlined,
   InfoCircleOutlined,
   BlockOutlined,
-  EditOutlined
+  EditOutlined,
+  LinkOutlined,
+  CopyOutlined
 } from '@ant-design/icons'
 import type {
   SubLibrary, AttributeValue, Location, AttributeType,
   FolderScanResult, RollImportConfig, FolderAttrMatch, AutoOrganizeMode
 } from '../../types'
+import type { StorageMode } from '../../../../shared/import-types'
 import dayjs from 'dayjs'
 import LocationPicker from '../LocationPicker'
 import { useStore } from '../../store'
@@ -55,6 +58,7 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
   const [autoOrganize, setAutoOrganize] = useState(false)
   const [organizeBy, setOrganizeBy] = useState<AutoOrganizeMode>('year-month')
   const [autoCreateEquipment, setAutoCreateEquipment] = useState(true)
+  const [storageMode, setStorageMode] = useState<StorageMode>('managed')
   const [progress, setProgress] = useState({ total: 0, imported: 0, skipped: 0 })
   const [rollModeEnabled, setRollModeEnabled] = useState(false)
 
@@ -151,12 +155,17 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
       setProgress({ total: data.total ?? 0, imported: data.imported, skipped: data.skipped })
       setImportProgress({ total: data.total ?? 0, imported: data.imported, skipped: data.skipped })
     })
-    cleanupRef.current = [cleanTotal, cleanProg]
+    // 阶段一完成后立即通知父级刷新图库（占位卡片出现）
+    const cleanReg = window.api.import.onRegistered(() => {
+      onSuccess()
+    })
+    cleanupRef.current = [cleanTotal, cleanProg, cleanReg]
   }
 
   // ── single-batch import finish ────────────────────────────────────────────
   const applyAttributesAndFinish = async (result: { imported: number; skipped: number; importedIds: number[] }) => {
     cleanupRef.current.forEach((fn) => fn())
+    cleanupRef.current = []
     const ids = result.importedIds ?? []
 
     if (ids.length > 0) {
@@ -197,7 +206,7 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
     } else {
       setStep('select')
     }
-    setImportProgress(null)
+    // importProgress 由后台进度条自行清除，不在这里重置
   }
 
   const handleImport = async () => {
@@ -220,7 +229,8 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
       filmName: selectedFilmValue?.value ?? null,
       cameraName: selectedCameraValue?.value ?? null,
       lensName: selectedLensValue?.value ?? null,
-      autoCreateEquipment
+      autoCreateEquipment,
+      storageMode
     }
     if (pendingPaths.length > 0) {
       const result = await window.api.import.importPaths(pendingPaths, options)
@@ -558,16 +568,41 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
                   />
                 </div>
 
+                {/* 存储模式 */}
+                <div>
+                  <div style={{ color: '#888', fontSize: 12, marginBottom: 8 }}>存储方式</div>
+                  <Radio.Group
+                    value={storageMode}
+                    onChange={(e) => setStorageMode(e.target.value)}
+                    style={{ width: '100%' }}
+                  >
+                    <Space direction="vertical" style={{ width: '100%' }} size={6}>
+                      <Radio value="managed" style={{ color: '#ccc', alignItems: 'flex-start' }}>
+                        <div>
+                          <span style={{ fontSize: 13 }}><CopyOutlined style={{ marginRight: 5, color: '#c8832a' }} />复制到图库</span>
+                          <div style={{ color: '#555', fontSize: 11, marginTop: 2 }}>将文件复制到 FilmManager 管理目录，移动原文件不受影响</div>
+                        </div>
+                      </Radio>
+                      <Radio value="linked" style={{ color: '#ccc', alignItems: 'flex-start' }}>
+                        <div>
+                          <span style={{ fontSize: 13 }}><LinkOutlined style={{ marginRight: 5, color: '#c8832a' }} />建立索引</span>
+                          <div style={{ color: '#555', fontSize: 11, marginTop: 2 }}>只记录原始路径，不复制文件；移动或删除原文件将导致无法访问</div>
+                        </div>
+                      </Radio>
+                    </Space>
+                  </Radio.Group>
+                </div>
+
                 {/* 整理位置 */}
                 <div>
                   <div style={{ color: '#888', fontSize: 12, marginBottom: 6 }}>
-                    {autoOrganize ? '整理到根目录（可选）' : '导入到子库（可选）'}
+                    {storageMode === 'linked' ? '归档到子库（逻辑分组）' : autoOrganize ? '整理到根目录（可选）' : '导入到子库（可选）'}
                   </div>
                   <Select style={{ width: '100%' }} value={subLibId} onChange={setSubLibId} options={subLibOptions as never} placeholder="选择子库..." />
                 </div>
 
                 {/* 自动整理 */}
-                <div>
+                <div style={{ opacity: storageMode === 'linked' ? 0.4 : 1, pointerEvents: storageMode === 'linked' ? 'none' : 'auto' }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
                     <span style={{ color: '#aaa', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
                       <ApartmentOutlined style={{ color: '#c8832a' }} />

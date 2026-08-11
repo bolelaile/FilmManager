@@ -1,4 +1,5 @@
 export type AutoOrganizeMode = 'none' | 'year' | 'year-month' | 'camera' | 'film' | 'source-folder'
+export type StorageMode = 'managed' | 'linked'
 
 export interface ImportOptions {
   subLibraryId?: number
@@ -8,4 +9,5 @@ export interface ImportOptions {
   cameraName?: string | null
   lensName?: string | null
   autoCreateEquipment?: boolean
+  storageMode?: StorageMode
 }

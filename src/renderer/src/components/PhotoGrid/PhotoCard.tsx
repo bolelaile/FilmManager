@@ -1,6 +1,6 @@
 import React, { useEffect, useState, memo } from 'react'
 import { Tooltip } from 'antd'
-import { FileImageOutlined, CheckCircleFilled } from '@ant-design/icons'
+import { FileImageOutlined, CheckCircleFilled, LoadingOutlined } from '@ant-design/icons'
 import type { Photo, AttributeType } from '../../types'
 import { FilmIconImg } from '../FilmIcon'
 
@@ -49,6 +49,35 @@ function SmallCard({
 
   // 展示所有激活的属性类别（排除 imported_at）
   const displayTypes = attrTypes.filter((t) => t.is_active && t.key !== 'imported_at')
+
+  // 导入中占位态
+  if (photo.import_status === 'indexing') {
+    return (
+      <div
+        className="photo-card"
+        style={{
+          flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 10,
+          background: '#181818', border: '1px solid #1e1e1e', borderRadius: 6,
+          padding: '5px 10px 5px 5px', boxSizing: 'border-box', cursor: 'default'
+        }}
+      >
+        <div style={{
+          width: size, height: size, flexShrink: 0, borderRadius: 4,
+          background: 'linear-gradient(90deg,#1e1e1e 25%,#252525 50%,#1e1e1e 75%)',
+          backgroundSize: '200% 100%', animation: 'shimmer 1.4s infinite',
+          display: 'flex', alignItems: 'center', justifyContent: 'center'
+        }}>
+          <LoadingOutlined style={{ color: '#333', fontSize: 14 }} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ color: '#444', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {photo.original_name}
+          </div>
+          <div style={{ color: '#333', fontSize: 11, marginTop: 2 }}>正在导入...</div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div

@@ -547,6 +547,8 @@ async function processQueueItem(
   const storageMode = options.storageMode ?? 'managed'
   const thumbDir = getThumbDir()
   const filesRoot = path.join(getLibraryRoot(), 'files')
+  // 在 try 块外追踪已拷贝路径，确保错误时能正确撤销
+  let copiedPath: string | null = null
 
   try {
     // 内容哈希去重（快速登记时跳过，此处补做）
@@ -573,6 +575,7 @@ async function processQueueItem(
       const targetDirectory = ensureSubLibraryDirectory(db, filesRoot, targetSubLibraryId)
       finalPath = ensureUniqueFilePath(path.join(targetDirectory, path.basename(sourcePath)))
       fs.copyFileSync(sourcePath, finalPath)
+      copiedPath = finalPath
     }
 
     // 将占位记录更新为完整记录
@@ -604,11 +607,8 @@ async function processQueueItem(
   } catch (err) {
     log.error('Queue item processing failed', sourcePath, err)
     // managed 模式下如果文件已拷贝但 DB 更新失败，需撤销拷贝
-    if (storageMode === 'managed') {
-      const row = db.prepare('SELECT file_path FROM photos WHERE id = ?').get(photoId) as { file_path: string } | undefined
-      if (row?.file_path && row.file_path !== sourcePath) {
-        try { fs.unlinkSync(row.file_path) } catch {}
-      }
+    if (copiedPath) {
+      try { fs.unlinkSync(copiedPath) } catch {}
     }
     db.prepare(`UPDATE import_queue SET status = 'error', error_msg = ?, done_at = datetime('now','localtime') WHERE id = ?`)
       .run(String(err), queueId)

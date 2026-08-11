@@ -2,7 +2,7 @@
 
 面向胶片摄影爱好者的本地桌面应用，用于管理胶片扫描文件。
 
-**当前版本：** 1.3.0 · **平台：** Windows x64
+**当前版本：** 1.3.1 · **平台：** Windows x64
 
 ---
 
@@ -360,6 +360,7 @@ FilmManager/
 | 1.2.0 | 版本整合与全面优化：① 地图视图改用 MapLibre GL JS（WebGL canvas 渲染，彻底修复 Modal 内黑屏），同时实现三源自动轮换（OSM → OSM.de → Esri），弱网/超时后自动切换并在标题栏提示当前源；② BatchEditModal 新增批量设置拍摄地点功能（set / skip / clear 三档）；③ 地点种子数据大幅扩充（新增各省地级市、旅行摄影常用地点，修正哈纳斯→喀纳斯等错别字，改进重复地点合并逻辑）；④ setForPhotos IPC 支持 locationId=null 直接清除地点，兼容卷视图批量清除操作；⑤ TopBar WebkitAppRegion 类型修正；⑥ faceted search 联动计数行为保持：有筛选条件时只显示结果集中存在的属性值 |
 | 1.2.1 | 地图方案切换：① 地图视图回归 Leaflet，采用三源自动轮换策略（OpenStreetMap.de → Esri World Street Map → OpenStreetMap），任一源连续 2 次瓦片错误或 25 s 无响应后自动切换到下一源；② 瓦片加载状态实时显示（loading/备用源/全部失败），失败时提供一键重试按钮；③ Leaflet 延迟动态导入，避免与 Electron 渲染进程冲突；④ LocationPicker 恢复为纯检索 + 手动坐标录入模式（本地模糊匹配 + OSM Nominatim 在线搜索），移除地图选点依赖；⑤ 地址种子数据保留 v1.2.0 扩充成果（各省地级市、修正喀纳斯等） |
 | 1.3.0 | 架构重构与稳定性加固：① Zustand Store 按领域拆分为三个独立 slice（filterSlice / librarySlice / uiSlice），保留 `useStore()` 向后兼容导出，减少无关重渲染；② Library.tsx 从 530 行 God Component 拆分为三个自定义 hook（`usePhotoLoader` / `useRollLoader` / `useLibraryData`），组件本体缩减至 ~270 行；③ 提取 `src/shared/import-types.ts` 消除 preload 与 main 进程中 `ImportOptions` / `AutoOrganizeMode` 的重复类型定义；④ 删除 `walkDirect` 透传别名函数，统一调用 `walk()`；⑤ 新增基于内容哈希的重复文件检测——导入前计算 MD5(文件大小 + 前 64KB)，与库中已有记录比对，内容重复自动跳过；⑥ 数据库增量迁移：新增 `photos.content_hash` 列及对应索引、`original_name` 搜索索引（`idx_photos_original_name`）；⑦ COUNT 查询优化：以 `COUNT(DISTINCT p.id)` 替代子查询包裹全量 SELECT DISTINCT，消除 ORDER BY 双重开销；⑧ `photos:delete` 原子化——先在事务内清除 DB 记录，再执行文件删除，确保数据库一致性；⑨ `photos:setAttributes` 原子化——DELETE + INSERT 包裹于同一事务，任一步骤失败整体回滚 |
+| 1.3.1 | 两阶段导入、存储模式与 Bug 修复：① 两阶段导入——第一阶段批量快速登记占位记录（`import_status='indexing'`），图库立即呈现骨架卡片；第二阶段在后台逐张完成 EXIF 解析、文件拷贝与缩略图生成，每张完成后推送进度；② 存储模式选择——导入对话框新增"复制到图库 / 建立索引"两种模式，索引模式仅记录原始路径，不复制文件；③ 全局后台导入进度条——导入期间固定显示于内容区底部，完成后 2 秒自动消失；④ 新增 `import_queue` 任务队列表用于追踪后台处理状态；⑤ Bug 修复：linked 模式下删除照片记录不再误删原始文件；linked 模式下移动到子库只更新逻辑分组，不移动文件；processQueueItem 错误回滚改用 try 块外的 copiedPath 变量追踪实际已拷贝路径，修复旧实现读取占位路径导致的回滚失效；导入对话框关闭时正确重置存储模式为默认值 |
 
 ---
 

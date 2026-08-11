@@ -1,6 +1,6 @@
 # FilmManager 产品规格文档
 
-**版本：** 1.3.0
+**版本：** 1.3.1
 **技术栈：** Electron 29 · React 18 · TypeScript 5 · Ant Design 5 · Zustand 4 · better-sqlite3 9 · Sharp 0.33 · Leaflet 1.9 · @tanstack/react-virtual 3 · electron-vite 2
 
 ---
@@ -65,7 +65,9 @@ CREATE TABLE photos (
   shot_date      TEXT,
   rotation       INTEGER NOT NULL DEFAULT 0,
   notes          TEXT    DEFAULT '',
-  content_hash   TEXT
+  content_hash   TEXT,
+  storage_mode   TEXT    NOT NULL DEFAULT 'managed',
+  import_status  TEXT    NOT NULL DEFAULT 'ready'
 );
 CREATE INDEX idx_photos_sub_library    ON photos(sub_library_id);
 CREATE INDEX idx_photos_imported_at    ON photos(imported_at);
@@ -82,6 +84,8 @@ CREATE INDEX idx_photos_content_hash   ON photos(content_hash);
 | `shot_date` | `YYYY-MM-DD`；优先 EXIF DateTimeOriginal，可用户覆盖 |
 | `rotation` | 用户旋转角度，固定为 0 / 90 / 180 / 270（顺时针），重启后保持 |
 | `content_hash` | MD5(文件大小字节串 + 文件前 64KB)；导入时去重用；相同哈希视为重复，自动跳过 |
+| `storage_mode` | `managed`（复制到图库 files/）或 `linked`（只记录原始路径）；linked 模式下移动/删除不操作源文件 |
+| `import_status` | `indexing`（两阶段导入占位中）/ `ready`（完整可用）/ `error`（处理失败） |
 
 **支持的文件格式**
 
@@ -323,6 +327,9 @@ color_profiles.file_path   → {resources/userData}/profiles/{name}.icc
 | 迁移 8 | `CREATE INDEX IF NOT EXISTS idx_photos_original_name ON photos(original_name)` |
 | 迁移 9 | `ALTER TABLE photos ADD COLUMN content_hash TEXT` |
 | 迁移 10 | `CREATE INDEX IF NOT EXISTS idx_photos_content_hash ON photos(content_hash)` |
+| 迁移 11 | `ALTER TABLE photos ADD COLUMN storage_mode TEXT NOT NULL DEFAULT 'managed'` |
+| 迁移 12 | `ALTER TABLE photos ADD COLUMN import_status TEXT NOT NULL DEFAULT 'ready'` |
+| 迁移 13 | 创建 `import_queue` 表（`id, source_path, status, photo_id, error_msg, queued_at, done_at`）及 `idx_import_queue_status` / `idx_import_queue_photo_id` 索引 |
 
 ---
 
@@ -960,3 +967,4 @@ App（ConfigProvider: 深色主题 #141414，primary #c8832a）
 | 1.2.0 | 地图改用 MapLibre GL；BatchEditModal 批量设置地点；地点种子数据扩充；TopBar 类型修正 |
 | **1.2.1** | **地图回归 Leaflet**，三源自动轮换（OSM.de → Esri → OSM），25s 超时 + 2 次错误自动切换；LocationPicker 恢复纯检索+手动坐标模式 |
 | **1.3.0** | **架构重构与稳定性加固**：Zustand Store 拆分为 3 个领域 slice；Library.tsx 拆分为 3 个自定义 hook（usePhotoLoader / useRollLoader / useLibraryData）；提取共享类型 `import-types.ts`；删除 walkDirect 别名；基于内容哈希（MD5 文件大小+前 64KB）的重复文件检测；数据库新增 content_hash 列+索引、original_name 索引；COUNT 查询优化（COUNT(DISTINCT p.id) 替代子查询包裹）；photos:delete / photos:setAttributes 操作原子化 |
+| **1.3.1** | **两阶段导入与存储模式**：第一阶段批量快速登记占位记录（`import_status='indexing'`）立即刷新图库骨架卡片；第二阶段后台完成 EXIF/拷贝/缩略图；存储模式新增"建立索引"（linked）选项，仅记录原始路径不复制文件；全局后台进度条（ImportProgressBar）固定显示于内容区底部；新增 `import_queue` 任务队列表；Bug 修复：linked 模式删除/移动不操作源文件；processQueueItem 错误回滚用 `copiedPath` 追踪实际已拷贝路径；对话框关闭时正确重置 storageMode |

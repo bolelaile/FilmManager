@@ -121,6 +121,7 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
       setDoneResults([])
       setCreateRollEnabled(false)
       setSingleRollName('')
+      setStorageMode('managed')
       cleanupRef.current.forEach((fn) => fn())
       cleanupRef.current = []
     }

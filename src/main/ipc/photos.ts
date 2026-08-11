@@ -254,12 +254,13 @@ export function registerPhotosIpc(): void {
     const db = getDb()
 
     // 先收集待删文件路径（DB 操作前查询，避免删后无法找到路径）
+    // linked 模式的源文件不属于图库管理，不随照片记录删除
     const filesToDelete: { file_path: string; thumb_path?: string }[] = []
     if (deleteFile) {
-      const sel = db.prepare('SELECT file_path, thumb_path FROM photos WHERE id = ?')
+      const sel = db.prepare('SELECT file_path, thumb_path, storage_mode FROM photos WHERE id = ?')
       for (const id of ids) {
-        const row = sel.get(id) as { file_path: string; thumb_path?: string } | undefined
-        if (row) filesToDelete.push(row)
+        const row = sel.get(id) as { file_path: string; thumb_path?: string; storage_mode: string } | undefined
+        if (row && row.storage_mode !== 'linked') filesToDelete.push(row)
       }
     }
 

@@ -199,11 +199,17 @@ export function movePhotosToSubLibrary(
 
   for (const id of new Set(photoIds)) {
     const photo = db.prepare(`
-      SELECT id, file_path, original_name, sub_library_id
+      SELECT id, file_path, original_name, sub_library_id, storage_mode
       FROM photos WHERE id = ?
-    `).get(id) as PhotoRow | undefined
+    `).get(id) as (PhotoRow & { storage_mode?: string }) | undefined
     if (!photo) {
       result.failed.push({ id, filePath: '', reason: '照片记录不存在' })
+      continue
+    }
+    // linked 模式只更新 sub_library_id，不移动源文件
+    if (photo.storage_mode === 'linked') {
+      db.prepare('UPDATE photos SET sub_library_id = ? WHERE id = ?').run(subLibraryId, id)
+      result.unchanged++
       continue
     }
     mergeMoveResult(result, relocatePhoto(db, filesRoot, photo, subLibraryId))

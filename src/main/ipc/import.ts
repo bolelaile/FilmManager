@@ -9,7 +9,8 @@ import {
   getExifData,
   SUPPORTED_EXTENSIONS,
   getFileType,
-  computeContentHash
+  computeContentHash,
+  detectFilmFormat
 } from '../services/thumbnail'
 import {
   ensureSubLibraryDirectory,
@@ -222,15 +223,19 @@ export function registerImportIpc(): void {
   })
 
   // ── 3. 扫描文件夹：枚举子文件夹，匹配属性 ────────────────────────────────
-  ipcMain.handle('import:scanFolders', async (event) => {
-    const win = BrowserWindow.fromWebContents(event.sender)
-    const result = await dialog.showOpenDialog(win!, {
-      properties: ['openDirectory'],
-      title: '选择包含子文件夹（每个子文件夹为一卷）的根目录'
-    })
-    if (result.canceled || !result.filePaths[0]) return null
-
-    const rootPath = result.filePaths[0]
+  ipcMain.handle('import:scanFolders', async (event, providedPath?: string) => {
+    let rootPath: string
+    if (providedPath) {
+      rootPath = providedPath
+    } else {
+      const win = BrowserWindow.fromWebContents(event.sender)
+      const result = await dialog.showOpenDialog(win!, {
+        properties: ['openDirectory'],
+        title: '选择包含子文件夹（每个子文件夹为一卷）的根目录'
+      })
+      if (result.canceled || !result.filePaths[0]) return null
+      rootPath = result.filePaths[0]
+    }
     const db = getDb()
 
     // Load all matchable attribute values (film, film_format, camera, lens)
@@ -342,7 +347,8 @@ export function registerImportIpc(): void {
         subLibraryId: cfg.subLibraryId ?? undefined,
         shotDate: cfg.shotDate ?? null,
         cameraName: configuredAttrs.find((attr) => attr.key === 'camera')?.value ?? null,
-        lensName: configuredAttrs.find((attr) => attr.key === 'lens')?.value ?? null
+        lensName: configuredAttrs.find((attr) => attr.key === 'lens')?.value ?? null,
+        filmName: configuredAttrs.find((attr) => attr.key === 'film')?.value ?? null
       }
 
       for (const filePath of files) {
@@ -597,6 +603,12 @@ async function processQueueItem(
     const autoCreateEquipment = options.autoCreateEquipment !== false
     assignEquipmentAttribute(photoId, 'camera', options.cameraName ?? exif.cameraModel, autoCreateEquipment)
     assignEquipmentAttribute(photoId, 'lens', options.lensName ?? exif.lensModel, autoCreateEquipment)
+    if (meta) {
+      const filmSizeType = getPhotoFilmSizeType(photoId, options.filmName)
+      const cameraInfo = getPhotoCameraFormatInfo(photoId, options.cameraName ?? exif.cameraModel)
+      const detectedFormat = await resolveFilmFormat(sourcePath, meta.width, meta.height, filmSizeType, cameraInfo)
+      if (detectedFormat) assignFilmFormatAttribute(photoId, detectedFormat)
+    }
 
     db.prepare(`UPDATE import_queue SET status = 'done', done_at = datetime('now','localtime') WHERE id = ?`).run(queueId)
 
@@ -670,6 +682,12 @@ async function importFile(sourcePath: string, options: ImportOptions): Promise<n
     const autoCreateEquipment = options.autoCreateEquipment !== false
     assignEquipmentAttribute(photoId, 'camera', options.cameraName ?? exif.cameraModel, autoCreateEquipment)
     assignEquipmentAttribute(photoId, 'lens', options.lensName ?? exif.lensModel, autoCreateEquipment)
+    if (meta) {
+      const filmSizeType = getPhotoFilmSizeType(photoId, options.filmName)
+      const cameraInfo = getPhotoCameraFormatInfo(photoId, options.cameraName ?? exif.cameraModel)
+      const detectedFormat = await resolveFilmFormat(sourcePath, meta.width, meta.height, filmSizeType, cameraInfo)
+      if (detectedFormat) assignFilmFormatAttribute(photoId, detectedFormat)
+    }
 
     // 后台生成缩略图
     generateThumbnail(finalDest, thumbDir).then((thumbPath) => {
@@ -799,4 +817,182 @@ function resolveTargetSubLibrary(
 
 function sanitizeSubLibraryName(name: string): string {
   return name.replace(/[\u0000-\u001f]/g, '').trim().slice(0, 100) || '未命名'
+}
+
+/**
+ * 查找照片已分配的胶卷属性值的 film_size_type（'135'|'120'|'both'|null）。
+ * 若 options 中提供了 filmName，优先按名称从 DB 中找；否则按 photo_attributes 中已存在的记录查。
+ */
+function getPhotoFilmSizeType(photoId: number, filmName?: string | null): '135' | '120' | 'both' | null {
+  try {
+    const db = getDb()
+    const filmAttrType = db.prepare("SELECT id FROM attribute_types WHERE key = 'film'").get() as { id: number } | undefined
+    if (!filmAttrType) return null
+
+    let sizeType: string | null = null
+
+    if (filmName) {
+      // 按名称直接查
+      const row = db.prepare(
+        `SELECT film_size_type FROM attribute_values WHERE attribute_type_id = ? AND LOWER(value) = LOWER(?)`
+      ).get(filmAttrType.id, filmName) as { film_size_type: string | null } | undefined
+      sizeType = row?.film_size_type ?? null
+    }
+
+    if (!sizeType) {
+      // 按已关联的 photo_attributes 查
+      const row = db.prepare(`
+        SELECT av.film_size_type FROM photo_attributes pa
+        JOIN attribute_values av ON av.id = pa.attribute_value_id
+        WHERE pa.photo_id = ? AND pa.attribute_type_id = ?
+        LIMIT 1
+      `).get(photoId, filmAttrType.id) as { film_size_type: string | null } | undefined
+      sizeType = row?.film_size_type ?? null
+    }
+
+    if (sizeType === '135' || sizeType === '120' || sizeType === 'both') return sizeType
+    return null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 相机画幅令牌 → film_format 属性值映射
+ */
+const CAMERA_FORMAT_TOKEN_MAP: Record<string, string> = {
+  '135':  '135 / 35mm',
+  '半格': '半格 / 17.5mm',
+  '645':  '645 中画幅',
+  '6x6':  '6x6 中画幅',
+  '6x7':  '6x7 中画幅',
+  '6x8':  '6x8 中画幅',
+  '6x9':  '6x9 中画幅',
+  '6x12': '6x12 中画幅',
+  'xpan': '135 宽幅 / Xpan',
+  '4x5':  '4x5 大画幅',
+  '8x10': '8x10 大画幅',
+}
+
+/**
+ * 查找相机画幅信息。
+ * 返回 { formats: string[](film_format值列表), defaultFormat: string | null } 或 null（未知相机）。
+ */
+function getPhotoCameraFormatInfo(
+  photoId: number,
+  cameraName?: string | null
+): { formats: string[]; defaultFormat: string | null } | null {
+  try {
+    const db = getDb()
+    const camAttrType = db.prepare("SELECT id FROM attribute_types WHERE key = 'camera'").get() as { id: number } | undefined
+    if (!camAttrType) return null
+
+    let row: { camera_formats: string | null; camera_default_format: string | null } | undefined
+
+    if (cameraName) {
+      row = db.prepare(
+        `SELECT camera_formats, camera_default_format FROM attribute_values
+         WHERE attribute_type_id = ? AND LOWER(value) = LOWER(?)`
+      ).get(camAttrType.id, cameraName) as typeof row
+    }
+
+    if (!row) {
+      row = db.prepare(`
+        SELECT av.camera_formats, av.camera_default_format FROM photo_attributes pa
+        JOIN attribute_values av ON av.id = pa.attribute_value_id
+        WHERE pa.photo_id = ? AND pa.attribute_type_id = ?
+        LIMIT 1
+      `).get(photoId, camAttrType.id) as typeof row
+    }
+
+    if (!row?.camera_formats) return null
+
+    const tokens = row.camera_formats.split(',').map(t => t.trim()).filter(Boolean)
+    const formats = tokens.map(t => CAMERA_FORMAT_TOKEN_MAP[t]).filter(Boolean)
+    const defaultFormat = row.camera_default_format
+      ? (CAMERA_FORMAT_TOKEN_MAP[row.camera_default_format] ?? null)
+      : null
+
+    return formats.length > 0 ? { formats, defaultFormat } : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 综合相机画幅信息和胶卷类型约束，确定最终胶片格式。
+ * - 相机只有一种画幅：直接返回，无需像素分析
+ * - 相机有多种画幅：取与 filmSizeType 相交后调用 detectFilmFormat
+ * - 无相机信息：仅用 filmSizeType 约束调用 detectFilmFormat
+ */
+async function resolveFilmFormat(
+  filePath: string,
+  width: number,
+  height: number,
+  filmSizeType: '135' | '120' | 'both' | null,
+  cameraInfo: { formats: string[]; defaultFormat: string | null } | null
+): Promise<string | null> {
+  if (cameraInfo) {
+    if (cameraInfo.formats.length === 1) {
+      // 单画幅相机：不需要像素分析
+      return cameraInfo.formats[0]
+    }
+    // 多画幅相机：filmSizeType 与 cameraInfo.formats 取交集
+    if (filmSizeType && filmSizeType !== 'both') {
+      // 把 filmSizeType 转换为对应的 film_format 值集合
+      let filmFormatSet: Set<string>
+      if (filmSizeType === '135') {
+        filmFormatSet = new Set(['135 / 35mm', '半格 / 17.5mm', '135 宽幅 / Xpan'])
+      } else {
+        // '120'
+        filmFormatSet = new Set(['645 中画幅', '6x6 中画幅', '6x7 中画幅', '6x8 中画幅', '6x9 中画幅', '6x12 中画幅', '120 中画幅'])
+      }
+      const intersection = cameraInfo.formats.filter(f => filmFormatSet.has(f))
+      if (intersection.length === 1) return intersection[0]
+      if (intersection.length === 0) {
+        // 无交集（数据矛盾）：降级到默认画幅
+        return cameraInfo.defaultFormat
+      }
+      // 还有多个候选：继续像素分析（传 filmSizeType）
+    }
+    // 多画幅且无法缩减：使用像素分析
+  }
+  return detectFilmFormat(filePath, width, height, filmSizeType)
+}
+
+function assignFilmFormatAttribute(photoId: number, formatValue: string): void {
+  try {
+    const db = getDb()
+    const attrType = db.prepare("SELECT id FROM attribute_types WHERE key = 'film_format'").get() as { id: number } | undefined
+    if (!attrType) return
+
+    // 照片已有该属性则跳过
+    const existing = db.prepare(
+      'SELECT 1 FROM photo_attributes WHERE photo_id = ? AND attribute_type_id = ?'
+    ).get(photoId, attrType.id)
+    if (existing) return
+
+    // 查找或创建对应的 attribute_value
+    let val = db.prepare(
+      'SELECT id FROM attribute_values WHERE attribute_type_id = ? AND value = ?'
+    ).get(attrType.id, formatValue) as { id: number } | undefined
+
+    if (!val) {
+      // 自动检测到的格式值如果不在预设里，就创建一个非预设条目
+      db.prepare(
+        'INSERT OR IGNORE INTO attribute_values (attribute_type_id, value, is_preset) VALUES (?, ?, 0)'
+      ).run(attrType.id, formatValue)
+      val = db.prepare(
+        'SELECT id FROM attribute_values WHERE attribute_type_id = ? AND value = ?'
+      ).get(attrType.id, formatValue) as { id: number } | undefined
+    }
+
+    if (val) {
+      db.prepare(
+        'INSERT OR IGNORE INTO photo_attributes (photo_id, attribute_type_id, attribute_value_id) VALUES (?, ?, ?)'
+      ).run(photoId, attrType.id, val.id)
+    }
+  } catch (err) {
+    log.warn('assignFilmFormatAttribute failed', err)
+  }
 }

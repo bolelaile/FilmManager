@@ -71,6 +71,8 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
   const [typeSearchTexts, setTypeSearchTexts] = useState<Record<number, string>>({})
   const [isDragging, setIsDragging] = useState(false)
   const [pendingPaths, setPendingPaths] = useState<string[]>([])
+  const [rollDragging, setRollDragging] = useState(false)
+  const rollDragCounter = useRef(0)
   const [selectedLocation, setSelectedLocation] = useState<Location | null>(null)
   const [shotDate, setShotDate] = useState<string | null>(null)
   const [createRollEnabled, setCreateRollEnabled] = useState(false)
@@ -122,6 +124,8 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
       setCreateRollEnabled(false)
       setSingleRollName('')
       setStorageMode('managed')
+      setRollDragging(false)
+      rollDragCounter.current = 0
       cleanupRef.current.forEach((fn) => fn())
       cleanupRef.current = []
     }
@@ -243,10 +247,10 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
   }
 
   // ── roll-mode: scan ───────────────────────────────────────────────────────
-  const handleScanFolders = async () => {
+  const handleScanFolders = async (rootPath?: string) => {
     setScanning(true)
     try {
-      const result = await window.api.import.scanFolders() as {
+      const result = await window.api.import.scanFolders(rootPath) as {
         rootPath: string
         folders: FolderScanResult[]
         rootFileCount: number
@@ -414,17 +418,42 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
             </div>
 
             {rollModeEnabled ? (
-              /* ── roll mode: just a scan button ── */
+              /* ── roll mode: drag zone + scan button ── */
               <>
-                <div style={{ color: '#888', fontSize: 12, marginBottom: 4 }}>
-                  选择一个包含子文件夹的根目录，每个子文件夹将被识别为一卷
+                {/* 拖入文件夹区域 */}
+                <div
+                  onDragEnter={(e) => { e.preventDefault(); rollDragCounter.current++; setRollDragging(true) }}
+                  onDragLeave={(e) => { e.preventDefault(); rollDragCounter.current--; if (rollDragCounter.current === 0) setRollDragging(false) }}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    rollDragCounter.current = 0
+                    setRollDragging(false)
+                    const paths: string[] = []
+                    for (const file of Array.from(e.dataTransfer.files)) paths.push((file as any).path)
+                    const dir = paths.find((p) => p) ?? null
+                    if (dir) handleScanFolders(dir)
+                  }}
+                  style={{
+                    border: `2px dashed ${rollDragging ? '#c8832a' : '#333'}`,
+                    borderRadius: 8, padding: '16px 12px', textAlign: 'center',
+                    background: rollDragging ? 'rgba(200,131,42,0.08)' : '#111',
+                    transition: 'all 0.2s', cursor: 'default'
+                  }}
+                >
+                  <InboxOutlined style={{ fontSize: 28, color: rollDragging ? '#c8832a' : '#444', marginBottom: 6 }} />
+                  <div style={{ color: rollDragging ? '#c8832a' : '#666', fontSize: 13 }}>
+                    将包含子文件夹的根目录拖放至此处
+                  </div>
+                  <div style={{ color: '#444', fontSize: 11, marginTop: 3 }}>每个子文件夹将被识别为一卷</div>
                 </div>
+                <div style={{ color: '#666', fontSize: 11, textAlign: 'center', margin: '2px 0' }}>或</div>
                 <Button
                   type="primary"
                   block
                   size="large"
                   icon={scanning ? <LoadingOutlined /> : <FolderOpenOutlined />}
-                  onClick={handleScanFolders}
+                  onClick={() => handleScanFolders()}
                   loading={scanning}
                   style={{ background: '#c8832a', borderColor: '#c8832a' }}
                 >
@@ -833,6 +862,7 @@ function RollConfirmRow({
   const [editingName, setEditingName] = useState(false)
   const [nameDraft, setNameDraft] = useState(rc.rollName)
   const [locSearch, setLocSearch] = useState('')
+  const [typeSearchTexts, setTypeSearchTexts] = useState<Record<number, string>>({})
 
   const filmAttrId = filmTypeId
   const selectedFilm = filmAttrId ? filmValues.find((v) => v.id === rc.attrs[filmAttrId]) : null
@@ -944,10 +974,12 @@ function RollConfirmRow({
           </div>
         </Tooltip>
 
-        {/* Other attr selects (compact) */}
+        {/* Other attr selects (compact, with inline-create) */}
         {nonFilmTypes.map((type) => {
           const vals = typeValues[type.id] ?? []
           const selectedId = rc.attrs[type.id] ?? null
+          const searchText = (typeSearchTexts[type.id] ?? '').trim()
+          const alreadyExists = vals.some((v) => normalize(v.value) === normalize(searchText))
           return (
             <div key={type.id} style={{ display: 'flex', alignItems: 'center' }}>
               <Select
@@ -956,10 +988,13 @@ function RollConfirmRow({
                 style={{ minWidth: 100 }}
                 placeholder={type.display_name}
                 value={selectedId ?? undefined}
-                onChange={(v) => onUpdate({
-                  attrs: { ...rc.attrs, [type.id]: v ?? null },
-                  matchedAliases: { ...rc.matchedAliases, [type.id]: null }
-                })}
+                onChange={(v) => {
+                  onUpdate({
+                    attrs: { ...rc.attrs, [type.id]: v ?? null },
+                    matchedAliases: { ...rc.matchedAliases, [type.id]: null }
+                  })
+                }}
+                onSearch={(v) => setTypeSearchTexts((prev) => ({ ...prev, [type.id]: v }))}
                 allowClear
                 onClear={() => onUpdate({
                   attrs: { ...rc.attrs, [type.id]: null },
@@ -969,6 +1004,30 @@ function RollConfirmRow({
                 options={vals.map((v) => ({ value: v.id, label: v.value }))}
                 styles={{ popup: { root: { background: '#1a1a1a' } } }}
                 popupMatchSelectWidth={false}
+                dropdownRender={(menu) => (
+                  <>
+                    {menu}
+                    {searchText && !alreadyExists && (
+                      <>
+                        <Divider style={{ margin: '4px 0', borderColor: '#333' }} />
+                        <div
+                          style={{ padding: '5px 8px', cursor: 'pointer', color: '#c8832a', fontSize: 11 }}
+                          onMouseDown={async (e) => {
+                            e.preventDefault()
+                            const newId = await onAddValue(type.id, searchText)
+                            onUpdate({
+                              attrs: { ...rc.attrs, [type.id]: newId },
+                              matchedAliases: { ...rc.matchedAliases, [type.id]: null }
+                            })
+                            setTypeSearchTexts((prev) => ({ ...prev, [type.id]: '' }))
+                          }}
+                        >
+                          <PlusOutlined /> 新增 "{searchText}"
+                        </div>
+                      </>
+                    )}
+                  </>
+                )}
               />
               {aliasLabel(type.id)}
               {sourceLabel(type.id)}

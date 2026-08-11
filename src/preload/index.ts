@@ -25,7 +25,7 @@ const api = {
   import: {
     selectAndImport: (options?: ImportOptions) => ipcRenderer.invoke('import:selectAndImport', options),
     importPaths: (paths: string[], options?: ImportOptions) => ipcRenderer.invoke('import:importPaths', paths, options),
-    scanFolders: () => ipcRenderer.invoke('import:scanFolders'),
+    scanFolders: (rootPath?: string) => ipcRenderer.invoke('import:scanFolders', rootPath),
     importRolls: (configs: unknown[]) => ipcRenderer.invoke('import:importRolls', configs),
     onProgress: (cb: (data: { imported: number; skipped: number; total?: number }) => void) => {
       ipcRenderer.on('import:progress', (_, data) => cb(data))

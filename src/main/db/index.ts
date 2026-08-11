@@ -156,6 +156,36 @@ function runMigrations(): void {
   try { db.exec(`ALTER TABLE photos ADD COLUMN content_hash TEXT`) } catch {}
   try { db.exec(`CREATE INDEX IF NOT EXISTS idx_photos_content_hash ON photos(content_hash)`) } catch {}
 
+  // 迁移：补充胶片格式预设值（半格 / 645 / 66 / 67 / 68 / 612）
+  try {
+    const filmFormatType = db.prepare("SELECT id FROM attribute_types WHERE key='film_format'").get() as { id: number } | undefined
+    if (filmFormatType) {
+      const insFormat = db.prepare('INSERT OR IGNORE INTO attribute_values (attribute_type_id, value, is_preset) VALUES (?, ?, 1)')
+      ;['半格 / 17.5mm', '645 中画幅', '6x6 中画幅', '6x7 中画幅', '6x8 中画幅', '6x12 中画幅'].forEach(v =>
+        insFormat.run(filmFormatType.id, v)
+      )
+    }
+  } catch {}
+
+  // 迁移：胶卷 film_size_type（约束格式自动识别范围）
+  // '135' = 仅 135 胶卷（半格 / 135）；'120' = 仅 120 中画幅；'both' = 通用；NULL = 未分类
+  try { db.exec(`ALTER TABLE attribute_values ADD COLUMN film_size_type TEXT`) } catch {}
+
+  // 迁移：相机画幅约束（用于辅助胶片格式自动识别）
+  // camera_formats：逗号分隔，如 '135,半格' 或 '645' 或 '6x6,645'
+  // camera_default_format：该相机的默认/主画幅
+  try { db.exec(`ALTER TABLE attribute_values ADD COLUMN camera_formats TEXT`) } catch {}
+  try { db.exec(`ALTER TABLE attribute_values ADD COLUMN camera_default_format TEXT`) } catch {}
+
+  // 迁移：补充胶片格式预设值（6x9 中画幅 / 135 宽幅 / Xpan）
+  try {
+    const filmFormatType2 = db.prepare("SELECT id FROM attribute_types WHERE key='film_format'").get() as { id: number } | undefined
+    if (filmFormatType2) {
+      const insFormat2 = db.prepare('INSERT OR IGNORE INTO attribute_values (attribute_type_id, value, is_preset) VALUES (?, ?, 1)')
+      ;['6x9 中画幅', '135 宽幅 / Xpan'].forEach(v => insFormat2.run(filmFormatType2.id, v))
+    }
+  } catch {}
+
   // 迁移：存储模式（managed = 复制到 library/files/；linked = 只记录原始路径）
   try { db.exec(`ALTER TABLE photos ADD COLUMN storage_mode TEXT NOT NULL DEFAULT 'managed'`) } catch {}
 
@@ -180,11 +210,297 @@ function runMigrations(): void {
   } catch {}
 
   seedDefaultData()
+  // film_size_type 分类、Fuji 名称统一、Lucky c400 新增（依赖 film 属性类型，必须在 seedDefaultData 之后）
+  try { migrateFilmSizeTypes() } catch (err) {
+    log.warn('migrateFilmSizeTypes non-fatal:', err)
+  }
+  // 相机画幅分类（依赖 camera 属性类型，必须在 seedDefaultData 之后）
+  try { migrateCameraFormats() } catch (err) {
+    log.warn('migrateCameraFormats non-fatal:', err)
+  }
   try {
     seedChinaLocations()
   } catch (err) {
     log.error('seedChinaLocations failed (non-fatal):', err)
   }
+}
+
+/**
+ * 为数据库中已有的胶卷条目写入 film_size_type 分类，
+ * 统一 Fuji/fuji 名称，新增 Lucky c400，并为富士品牌写入别名。
+ * 幂等：重复执行不会产生副作用。
+ */
+function migrateFilmSizeTypes(): void {
+  const filmType = db.prepare("SELECT id FROM attribute_types WHERE key='film'").get() as { id: number } | undefined
+  if (!filmType) return
+  const typeId = filmType.id
+
+  // ── 1. 按显示名批量设置 film_size_type ──────────────────────────────────
+  // SQL 规范化：去除空格、连字符、下划线后做 LIKE 匹配（大小写不敏感）
+  const normSql = `REPLACE(REPLACE(REPLACE(LOWER(value),' ',''),'-',''),'_','')`
+
+  // 这些模式在 normSql 结果上匹配；顺序：先精确/特殊，再宽泛
+  const patterns135: string[] = [
+    // Kodak 135-only
+    'kodaktmax100', 'kodaktmax400', 'kodaktmaxp3200',
+    'kodaktrix400',
+    'kodakektar100', 'kodakektar25',
+    'kodakportra160', 'kodakportra400', 'kodakportra800',
+    'kodakproimage100',
+    'kodakgold100',
+    'kodake100', 'kodakektachrome100', 'kodakektachrome64t', 'kodakektachrome64x',
+    'kodachrome',
+    'kodakcp200',
+    'newkodak%',
+    // Ilford 135-only
+    'ilfordhp5%', 'ilfordfp4%', 'ilforddelta100', 'ilforddelta400', 'ilforddelta3200',
+    'ilfordxp2', 'ilfordsfx', 'ilfordortho', 'ilfordpan100', 'ilfordpan400',
+    'ilfordvivd400', 'ilfordilfochrome100',
+    // Kentmere 135-only
+    'kentmere%',
+    // FOMAPAN 135-only
+    'fomapan100', 'fomapan200', 'fomapan400', 'fomaortho%', 'fomapan限定版%', 'fomapanr100%',
+    // ADOX 135-only
+    'adoxcms20%', 'adoxhr50', 'adoxscala50',
+    // AGFA 135-only
+    'agfaapx100', 'agfaapx400', 'agfacolor400%', 'agfavista200', 'agfavista400',
+    // Cinestill 135-only
+    'cinestill50d', 'cinestill400t', 'cinestill800t', 'cinestillxx',
+    // 电影卷分装（135）
+    'alienfilm%', 'crystalfilm%', 'hitchcock%', 'funvision%', 'king5%',
+    // AMBER / CANDIDO / ClearCreek / Cyberpunk / ColorZealous (135)
+    'amber%', 'candido%', 'clearcreek%', 'cyberpunk%', 'colorzealous%',
+    // Yashica / Sunny / ShenGuang / SuperJcolor / RETRO / VIBE (135)
+    'yashica400', 'yashicaruby60s', 'sunny100', 'shenguang400', 'superjcolor100', 'retro80',
+    'vibe400%', 'vibe800%', 'vibequalitymax%', 'vibequalityb%',
+    // Perutz (135)
+    'perutz%',
+    // YesStar (135)
+    'yesstar%',
+    // DisCamera (135 分装电影卷)
+    'discamera%',
+    // Orwo 135
+    'orwodn21', 'orwonc400', 'orwonc500', 'orwonp100', 'orwop400', 'orwopf2', 'orwoun54',
+  ]
+
+  // 120-only
+  const patterns120: string[] = [
+    'rolleiblackbird',   // Rollei Blackbird 是 120
+    'ilfordilfocolor',   // Ilford Ilfocolor 是 120
+  ]
+
+  // both 135+120
+  const patternsBoth: string[] = [
+    // HARMAN
+    'harman%',
+    // Kodak Gold 200 & Ultramax（120 也有售）
+    'kodakgold200', 'kodakultramax400',
+    // Lucky
+    'luckyc200%', 'luckyc400',
+    'luckyshd100', 'luckyshd400',
+    // Rollei （除 Blackbird 外均为 both）
+    'rolleiretro400s', 'rolleirpx25', 'rolleirpx100', 'rolleirpx400', 'rolleiinfrared',
+    // Fuji（富士品牌 135/120 都有）
+    'fuji%',
+    // Konica
+    'konica%',
+    // Woogo（120版本也有）
+    'woogo%',
+  ]
+
+  const tx = db.transaction(() => {
+    for (const p of patterns135) {
+      db.prepare(
+        `UPDATE attribute_values SET film_size_type = '135'
+         WHERE attribute_type_id = ? AND film_size_type IS NULL
+         AND ${normSql} LIKE ?`
+      ).run(typeId, p)
+    }
+    for (const p of patterns120) {
+      db.prepare(
+        `UPDATE attribute_values SET film_size_type = '120'
+         WHERE attribute_type_id = ? AND film_size_type IS NULL
+         AND ${normSql} LIKE ?`
+      ).run(typeId, p)
+    }
+    for (const p of patternsBoth) {
+      db.prepare(
+        `UPDATE attribute_values SET film_size_type = 'both'
+         WHERE attribute_type_id = ? AND film_size_type IS NULL
+         AND ${normSql} LIKE ?`
+      ).run(typeId, p)
+    }
+
+    // ── 2. 统一 fuji → Fuji（仅修改首字母小写的条目）────────────────────
+    db.prepare(
+      `UPDATE attribute_values SET value = 'F' || SUBSTR(value, 2)
+       WHERE attribute_type_id = ? AND SUBSTR(value, 1, 4) = 'fuji'`
+    ).run(typeId)
+
+    // ── 3. 新增 Lucky c400（如不存在）──────────────────────────────────────
+    db.prepare(
+      `INSERT OR IGNORE INTO attribute_values (attribute_type_id, value, icon_key, is_preset, film_size_type)
+       VALUES (?, 'Lucky c400', 'lucky_c400', 1, 'both')`
+    ).run(typeId)
+
+    // ── 4. 为富士品牌（所有 Fuji 开头的条目）添加别名 ─────────────────────
+    const fujiEntries = db.prepare(
+      `SELECT id FROM attribute_values WHERE attribute_type_id = ? AND LOWER(SUBSTR(value,1,4)) = 'fuji'`
+    ).all(typeId) as { id: number }[]
+
+    const brandAliases = ['fuji', '富士', 'fujifilm', '富士胶片', 'fujifilm富士', '富士FUJIFILM']
+    const insAlias = db.prepare(
+      `INSERT OR IGNORE INTO attribute_value_aliases (value_id, alias) VALUES (?, ?)`
+    )
+    for (const { id } of fujiEntries) {
+      for (const alias of brandAliases) {
+        insAlias.run(id, alias)
+      }
+    }
+  })
+  tx()
+  log.info('migrateFilmSizeTypes completed')
+}
+
+/**
+ * 为相机条目写入 camera_formats（支持画幅列表）和 camera_default_format（默认/主画幅），
+ * 同时新增库中没有的相机预设条目。幂等。
+ *
+ * camera_formats 中使用短令牌，对应 film_format 属性值：
+ *   135   → 135 / 35mm        半格  → 半格 / 17.5mm
+ *   645   → 645 中画幅         6x6  → 6x6 中画幅
+ *   6x7   → 6x7 中画幅         6x8  → 6x8 中画幅
+ *   6x9   → 6x9 中画幅         6x12 → 6x12 中画幅
+ *   xpan  → 135 宽幅 / Xpan   4x5  → 4x5 大画幅
+ *   8x10  → 8x10 大画幅
+ */
+function migrateCameraFormats(): void {
+  const cameraType = db.prepare("SELECT id FROM attribute_types WHERE key='camera'").get() as { id: number } | undefined
+  if (!cameraType) return
+  const typeId = cameraType.id
+
+  // [value, camera_formats, camera_default_format]
+  // camera_formats = 逗号分隔的短令牌（无空格）
+  const cameraData: [string, string, string][] = [
+    // ── 135 单画幅相机 ──────────────────────────────────────────────────────
+    ['Nikon F3',           '135',     '135'],
+    ['Nikon FM2',          '135',     '135'],
+    ['Nikon F100',         '135',     '135'],
+    ['Nikon FE2',          '135',     '135'],
+    ['Canon AE-1',         '135',     '135'],
+    ['Canon F-1',          '135',     '135'],
+    ['Canon EOS-1V',       '135',     '135'],
+    ['Leica M6',           '135',     '135'],
+    ['Leica M7',           '135',     '135'],
+    ['Leica M3',           '135',     '135'],
+    ['Leica M2',           '135',     '135'],
+    ['Contax G2',          '135',     '135'],
+    ['Contax T2',          '135',     '135'],
+    ['Contax RX',          '135',     '135'],
+    ['Olympus OM-1',       '135',     '135'],
+    ['Olympus OM-4T',      '135',     '135'],
+    ['Minolta X-700',      '135',     '135'],
+    ['Minolta CLE',        '135',     '135'],
+    ['Rollei 35',          '135',     '135'],
+    ['Pentax K1000',       '135',     '135'],
+    // ── 135 + 半格 兼用（默认 135）────────────────────────────────────────
+    ['Nikon F',            '135,半格', '135'],
+    ['Nikon F2',           '135,半格', '135'],
+    ['Nikon FA',           '135,半格', '135'],
+    ['Nikon FM',           '135,半格', '135'],
+    ['Nikon FE',           '135,半格', '135'],
+    ['Canon F-1n',         '135,半格', '135'],
+    ['Pentax MZ3',         '135,半格', '135'],
+    ['Pentax MZ5',         '135,半格', '135'],
+    ['Pentax MZ7',         '135,半格', '135'],
+    // ── 半格专用 ────────────────────────────────────────────────────────────
+    ['Olympus Pen FT',     '半格',    '半格'],
+    ['Olympus Pen F',      '半格',    '半格'],
+    ['Olympus Pen EE',     '半格',    '半格'],
+    ['Olympus Pen EED',    '半格',    '半格'],
+    ['Olympus Pen EES-2',  '半格',    '半格'],
+    ['Olympus Pen D',      '半格',    '半格'],
+    ['Canon Demi',         '半格',    '半格'],
+    ['Pentax 17',          '半格',    '半格'],
+    ['Yashica Samurai',    '半格',    '半格'],
+    ['Ricoh Auto Half',    '半格',    '半格'],
+    // ── 135 宽幅 / Xpan ──────────────────────────────────────────────────
+    ['Hasselblad Xpan',    'xpan',   'xpan'],
+    ['Hasselblad Xpan II', 'xpan',   'xpan'],
+    ['Fuji TX1',           'xpan',   'xpan'],
+    ['Fuji TX2',           'xpan',   'xpan'],
+    ['Mamiya 7 Panorama',  'xpan',   'xpan'],
+    ['Bronica RF645 Xpan', 'xpan',   'xpan'],
+    // ── 645 专用 ────────────────────────────────────────────────────────────
+    ['Pentax 645',         '645',    '645'],
+    ['Pentax 645N',        '645',    '645'],
+    ['Pentax 645Nii',      '645',    '645'],
+    ['Mamiya 645',         '645',    '645'],
+    ['Mamiya 645 Super',   '645',    '645'],
+    ['Mamiya 645 Pro',     '645',    '645'],
+    ['Contax 645',         '645',    '645'],
+    ['Fuji GW645',         '645',    '645'],
+    ['Fuji GA645',         '645',    '645'],
+    ['Bronica ETR',        '645',    '645'],
+    ['Bronica ETRSi',      '645',    '645'],
+    ['Bronica RF645',      '645',    '645'],
+    // ── 6×6 专用（部分可加 645 后背，但默认 6×6）──────────────────────────
+    ['Hasselblad 500C/M',  '6x6,645',   '6x6'],
+    ['Hasselblad 503CW',   '6x6,645',   '6x6'],
+    ['Rolleiflex 2.8F',    '6x6',       '6x6'],
+    ['Rolleiflex 3.5F',    '6x6',       '6x6'],
+    ['Rolleicord Vb',      '6x6',       '6x6'],
+    ['Yashica Mat-124G',   '6x6',       '6x6'],
+    ['海鸥 4B',             '6x6',       '6x6'],
+    ['海鸥 4A',             '6x6',       '6x6'],
+    ['海鸥 203',            '6x6',       '6x6'],
+    ['Kiev 88',            '6x6',       '6x6'],
+    ['Bronica S2A',        '6x6,645',   '6x6'],
+    ['Bronica SQ-A',       '6x6,645',   '6x6'],
+    ['Bronica SQ-Ai',      '6x6,645',   '6x6'],
+    ['Bronica GS-1',       '6x7,645',   '6x7'],
+    // ── 6×7 专用（部分兼容 645 后背）─────────────────────────────────────
+    ['Pentax 67',          '6x7',       '6x7'],
+    ['Pentax 6x7',         '6x7',       '6x7'],
+    ['Mamiya RZ67',        '6x7,645',   '6x7'],
+    ['Mamiya RB67',        '6x7,645',   '6x7'],
+    ['Fuji GW670 III',     '6x7',       '6x7'],
+    ['Fuji GW670',         '6x7',       '6x7'],
+    // ── 6×9 专用 ────────────────────────────────────────────────────────────
+    ['Fuji GW690 II',      '6x9',       '6x9'],
+    ['Fuji GW690 III',     '6x9',       '6x9'],
+    ['Fuji GSW690 III',    '6x9',       '6x9'],
+    ['Mamiya Press',       '6x9,6x7,6x6,645', '6x9'],
+    // ── Mamiya 7 / 7II（6×7 测距仪）───────────────────────────────────────
+    ['Mamiya 7',           '6x7',       '6x7'],
+    ['Mamiya 7II',         '6x7',       '6x7'],
+    // ── 6×12 / 大画幅 ─────────────────────────────────────────────────────
+    ['Linhof 617',         '6x12',      '6x12'],
+    ['Fuji G617',          '6x12',      '6x12'],
+    // ── 大画幅 ──────────────────────────────────────────────────────────────
+    ['Linhof Technika 45', '4x5',       '4x5'],
+    ['Sinar P2',           '4x5,8x10',  '4x5'],
+    // ── Holga / Diana / 玩具相机（6×6 / 6×4.5 可切换）─────────────────────
+    ['Holga 120N',         '6x6,645',   '6x6'],
+    ['Holga 120GN',        '6x6,645',   '6x6'],
+    ['Diana F+',           '6x6,645',   '6x6'],
+    ['Diana Mini',         '135,半格',  '135'],
+  ]
+
+  const insCam = db.prepare(`INSERT OR IGNORE INTO attribute_values (attribute_type_id, value, is_preset) VALUES (?, ?, 1)`)
+  const updCam = db.prepare(`
+    UPDATE attribute_values SET camera_formats = ?, camera_default_format = ?
+    WHERE attribute_type_id = ? AND value = ? AND camera_formats IS NULL
+  `)
+
+  db.transaction(() => {
+    for (const [value, formats, defaultFormat] of cameraData) {
+      insCam.run(typeId, value)
+      updCam.run(formats, defaultFormat, typeId, value)
+    }
+  })()
+
+  log.info('migrateCameraFormats completed')
 }
 
 // 胶片图标 manifest 映射：iconKey -> displayName
@@ -285,7 +601,7 @@ function seedDefaultData(): void {
     insertVal.run(devMethodType.id, v, null)
   )
 
-  ;['135 / 35mm', '120 中画幅', '4x5 大画幅', '8x10 大画幅'].forEach(v =>
+  ;['135 / 35mm', '半格 / 17.5mm', '645 中画幅', '6x6 中画幅', '6x7 中画幅', '6x8 中画幅', '6x9 中画幅', '6x12 中画幅', '135 宽幅 / Xpan', '120 中画幅', '4x5 大画幅', '8x10 大画幅'].forEach(v =>
     insertVal.run(filmFormatType.id, v, null)
   )
 

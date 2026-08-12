@@ -49,6 +49,9 @@ export interface FolderScanResult {
   parentMatches: AttrMatch[] // best-match from parent folder name (may overlap)
   parsedDate: string | null  // YYYY-MM-DD extracted from folder name, if any
   inferredRollName: string   // pre-computed suggested roll name
+  parsedLocationId: number | null
+  parsedLocationName: string | null
+  parsedSubject: string | null
 }
 
 export interface RollImportConfig {
@@ -59,6 +62,7 @@ export interface RollImportConfig {
   shotDate?: string | null
   subLibraryId?: number | null
   createRoll: boolean // false → just import photos without creating a roll
+  storageMode?: 'managed' | 'linked'
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -191,6 +195,150 @@ function buildRollName(
   return parts.join(' · ')
 }
 
+interface LocationRow {
+  id: number
+  name: string
+  address: string
+}
+
+/**
+ * Try to match a location name from the DB inside a folder name string.
+ * Returns the best (longest-name) match, or null.
+ */
+function matchLocationFromName(
+  folderName: string,
+  locations: LocationRow[]
+): { id: number; name: string } | null {
+  const norm = normalize(folderName)
+  // Sort by name length descending to prefer longer/more-specific matches
+  const sorted = [...locations].sort((a, b) => b.name.length - a.name.length)
+  for (const loc of sorted) {
+    const normLoc = normalize(loc.name)
+    if (normLoc.length < 2) continue
+    if (norm.includes(normLoc)) return { id: loc.id, name: loc.name }
+  }
+  // Also try address-level match (first segment before comma)
+  for (const loc of sorted) {
+    const firstSeg = normalize(loc.address.split(',')[0] ?? loc.address)
+    if (firstSeg.length >= 2 && norm.includes(firstSeg)) return { id: loc.id, name: loc.name }
+  }
+  return null
+}
+
+/**
+ * Extract a subject/theme token from the folder name after removing date patterns,
+ * matched attribute tokens, and matched location tokens.
+ * Returns null when there's nothing meaningful left.
+ */
+function extractSubject(
+  folderName: string,
+  attrMatches: AttrMatch[],
+  locationMatch: { id: number; name: string } | null
+): string | null {
+  // Remove date-like segments
+  let residual = folderName
+    .replace(/\b20\d{2}[-_./]?(0[1-9]|1[0-2])([-_./]?(0[1-9]|[12]\d|3[01]))?\b/g, '')
+    .replace(/\b[2-9]\d(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\b/g, '')
+    .replace(/\b[2-9]\d(0[1-9]|1[0-2])\b/g, '')
+
+  // Remove attribute value tokens (use normalized form to strip)
+  for (const m of attrMatches) {
+    // Remove by value and alias
+    const target = m.matchedAlias ?? m.value
+    const regex = new RegExp(target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')
+    residual = residual.replace(regex, '')
+    // Also try removing by normalized value
+    residual = residual.replace(new RegExp(m.value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), '')
+  }
+
+  // Remove location token
+  if (locationMatch) {
+    const locRegex = new RegExp(locationMatch.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')
+    residual = residual.replace(locRegex, '')
+  }
+
+  // Strip separators and whitespace
+  residual = residual.replace(/[\s\-_.[\]()\[\]]+/g, ' ').trim()
+
+  // Ignore very short or purely numeric residuals
+  if (!residual || residual.length < 2 || /^\d+$/.test(residual)) return null
+  return residual
+}
+
+function doScanFolders(rootPath: string): {
+  rootPath: string
+  folders: FolderScanResult[]
+  rootFileCount: number
+  rootMatches: AttrMatch[]
+} {
+  const db = getDb()
+  const matchableKeys = ['film', 'film_format', 'camera', 'lens']
+  const allValues = db.prepare(`
+    SELECT av.id, av.attribute_type_id, av.value, av.icon_key, at.key
+    FROM attribute_values av
+    JOIN attribute_types at ON at.id = av.attribute_type_id
+    WHERE at.key IN (${matchableKeys.map(() => '?').join(',')})
+    ORDER BY LENGTH(av.value) DESC
+  `).all(...matchableKeys) as { id: number; attribute_type_id: number; value: string; key: string; icon_key?: string | null }[]
+
+  const allAliases = db.prepare(`
+    SELECT ava.alias, ava.value_id, av.attribute_type_id, av.icon_key, at.key as type_key
+    FROM attribute_value_aliases ava
+    JOIN attribute_values av ON av.id = ava.value_id
+    JOIN attribute_types at ON at.id = av.attribute_type_id
+    WHERE at.key IN (${matchableKeys.map(() => '?').join(',')})
+    ORDER BY LENGTH(ava.alias) DESC
+  `).all(...matchableKeys) as AliasRow[]
+
+  const locations = db.prepare('SELECT id, name, address FROM locations ORDER BY LENGTH(name) DESC').all() as LocationRow[]
+
+  let entries: fs.Dirent[]
+  try {
+    entries = fs.readdirSync(rootPath, { withFileTypes: true })
+  } catch {
+    return { rootPath, folders: [], rootFileCount: 0, rootMatches: [] }
+  }
+
+  const rootName = path.basename(rootPath)
+  const rootMatches = matchFolderName(rootName, allValues, allAliases)
+
+  const folders: FolderScanResult[] = []
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    const folderPath = path.join(rootPath, entry.name)
+    const files = walk(folderPath)
+    if (files.length === 0) continue
+
+    const childMatches = matchFolderName(entry.name, allValues, allAliases)
+    const parsedDate = parseDateFromName(entry.name) ?? parseDateFromName(rootName)
+    const mergedMatches = mergeMatches(childMatches, rootMatches)
+    const inferredRollName = buildRollName(entry.name, mergedMatches, parsedDate)
+    const locationMatch = matchLocationFromName(entry.name, locations)
+    const subject = extractSubject(entry.name, mergedMatches, locationMatch)
+
+    folders.push({
+      name: entry.name,
+      folderPath,
+      fileCount: files.length,
+      matches: childMatches,
+      parentMatches: rootMatches,
+      parsedDate,
+      inferredRollName,
+      parsedLocationId: locationMatch?.id ?? null,
+      parsedLocationName: locationMatch?.name ?? null,
+      parsedSubject: subject
+    })
+  }
+
+  const rootFiles = fs.readdirSync(rootPath, { withFileTypes: true })
+    .filter((e) => !e.isDirectory())
+    .map((e) => path.join(rootPath, e.name))
+    .filter((f) => SUPPORTED_EXTENSIONS.has(path.extname(f).toLowerCase()))
+
+  return { rootPath, folders, rootFileCount: rootFiles.length, rootMatches }
+}
+
 export function registerImportIpc(): void {
   // ── 1. 打开文件夹选择对话框并导入（旧有，单批次） ──────────────────────────
   ipcMain.handle('import:selectAndImport', async (event, options: ImportOptions = {}) => {
@@ -236,9 +384,24 @@ export function registerImportIpc(): void {
       if (result.canceled || !result.filePaths[0]) return null
       rootPath = result.filePaths[0]
     }
-    const db = getDb()
+    return doScanFolders(rootPath)
+  })
 
-    // Load all matchable attribute values (film, film_format, camera, lens)
+  // ── 3b. 扫描单文件夹为一卷 ────────────────────────────────────────────────
+  ipcMain.handle('import:scanSingleFolder', async (event, providedPath?: string) => {
+    let folderPath: string
+    if (providedPath) {
+      folderPath = providedPath
+    } else {
+      const win = BrowserWindow.fromWebContents(event.sender)
+      const result = await dialog.showOpenDialog(win!, {
+        properties: ['openDirectory'],
+        title: '选择要作为一卷导入的文件夹'
+      })
+      if (result.canceled || !result.filePaths[0]) return null
+      folderPath = result.filePaths[0]
+    }
+    const db = getDb()
     const matchableKeys = ['film', 'film_format', 'camera', 'lens']
     const allValues = db.prepare(`
       SELECT av.id, av.attribute_type_id, av.value, av.icon_key, at.key
@@ -247,8 +410,6 @@ export function registerImportIpc(): void {
       WHERE at.key IN (${matchableKeys.map(() => '?').join(',')})
       ORDER BY LENGTH(av.value) DESC
     `).all(...matchableKeys) as { id: number; attribute_type_id: number; value: string; key: string; icon_key?: string | null }[]
-
-    // Load aliases for all matchable values
     const allAliases = db.prepare(`
       SELECT ava.alias, ava.value_id, av.attribute_type_id, av.icon_key, at.key as type_key
       FROM attribute_value_aliases ava
@@ -257,62 +418,28 @@ export function registerImportIpc(): void {
       WHERE at.key IN (${matchableKeys.map(() => '?').join(',')})
       ORDER BY LENGTH(ava.alias) DESC
     `).all(...matchableKeys) as AliasRow[]
+    const locations = db.prepare('SELECT id, name, address FROM locations ORDER BY LENGTH(name) DESC').all() as LocationRow[]
 
-    // Enumerate immediate subdirectories
-    let entries: fs.Dirent[]
-    try {
-      entries = fs.readdirSync(rootPath, { withFileTypes: true })
-    } catch {
-      return { rootPath, folders: [] }
+    const folderName = path.basename(folderPath)
+    const files = walk(folderPath)
+    const matches = matchFolderName(folderName, allValues, allAliases)
+    const parsedDate = parseDateFromName(folderName)
+    const locationMatch = matchLocationFromName(folderName, locations)
+    const subject = extractSubject(folderName, matches, locationMatch)
+    const inferredRollName = buildRollName(folderName, matches, parsedDate)
+    const scanResult: FolderScanResult = {
+      name: folderName,
+      folderPath,
+      fileCount: files.length,
+      matches,
+      parentMatches: [],
+      parsedDate,
+      inferredRollName,
+      parsedLocationId: locationMatch?.id ?? null,
+      parsedLocationName: locationMatch?.name ?? null,
+      parsedSubject: subject
     }
-
-    // ── Determine parent-folder role ──────────────────────────────────────
-    const rootName = path.basename(rootPath)
-    const rootMatches = matchFolderName(rootName, allValues, allAliases)
-
-    const folders: FolderScanResult[] = []
-
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue
-      const folderPath = path.join(rootPath, entry.name)
-      const files = walk(folderPath)
-      if (files.length === 0) continue
-
-      // Match child folder name (primary + alias)
-      const childMatches = matchFolderName(entry.name, allValues, allAliases)
-
-      // Parse date from child name (fallback to root name)
-      const parsedDate = parseDateFromName(entry.name) ?? parseDateFromName(rootName)
-
-      // Merge: child takes priority, parent fills gaps
-      // Exception: if parent provides the same type as child, child wins.
-      const mergedMatches = mergeMatches(childMatches, rootMatches)
-
-      const inferredRollName = buildRollName(entry.name, mergedMatches, parsedDate)
-
-      folders.push({
-        name: entry.name,
-        folderPath,
-        fileCount: files.length,
-        matches: childMatches,
-        parentMatches: rootMatches,
-        parsedDate,
-        inferredRollName
-      })
-    }
-
-    // Also count loose files in the root (no subfolder) as a potential "other" batch
-    const rootFiles = fs.readdirSync(rootPath, { withFileTypes: true })
-      .filter((e) => !e.isDirectory())
-      .map((e) => path.join(rootPath, e.name))
-      .filter((f) => SUPPORTED_EXTENSIONS.has(path.extname(f).toLowerCase()))
-
-    return {
-      rootPath,
-      folders,
-      rootFileCount: rootFiles.length,
-      rootMatches  // send to frontend so it can show the parent-level hint
-    }
+    return { folderPath, folder: scanResult }
   })
 
   // ── 4. 按卷批量导入（用户确认后） ────────────────────────────────────────
@@ -348,7 +475,8 @@ export function registerImportIpc(): void {
         shotDate: cfg.shotDate ?? null,
         cameraName: configuredAttrs.find((attr) => attr.key === 'camera')?.value ?? null,
         lensName: configuredAttrs.find((attr) => attr.key === 'lens')?.value ?? null,
-        filmName: configuredAttrs.find((attr) => attr.key === 'film')?.value ?? null
+        filmName: configuredAttrs.find((attr) => attr.key === 'film')?.value ?? null,
+        storageMode: cfg.storageMode ?? 'managed'
       }
 
       for (const filePath of files) {
@@ -634,6 +762,7 @@ async function importFile(sourcePath: string, options: ImportOptions): Promise<n
   const libraryRoot = getLibraryRoot()
   const filesRoot = path.join(libraryRoot, 'files')
   const thumbDir = getThumbDir()
+  const storageMode = options.storageMode ?? 'managed'
   let copiedPath: string | null = null
 
   try {
@@ -647,23 +776,27 @@ async function importFile(sourcePath: string, options: ImportOptions): Promise<n
     const meta = await getImageMeta(sourcePath)
     const exif = await getExifData(sourcePath)
     const effectiveShotDate = options.shotDate ?? exif.shotDate
-    const targetSubLibraryId = resolveTargetSubLibrary(
-      options,
-      sourcePath,
-      effectiveShotDate,
-      exif.cameraModel,
-      filesRoot
-    )
-    const targetDirectory = ensureSubLibraryDirectory(db, filesRoot, targetSubLibraryId)
-    const finalDest = ensureUniqueFilePath(path.join(targetDirectory, path.basename(sourcePath)))
-    fs.copyFileSync(sourcePath, finalDest)
-    copiedPath = finalDest
+
+    let finalDest: string
+    let targetSubLibraryId: number | undefined | null
+
+    if (storageMode === 'linked') {
+      finalDest = sourcePath
+      targetSubLibraryId = options.subLibraryId ?? null
+    } else {
+      targetSubLibraryId = resolveTargetSubLibrary(options, sourcePath, effectiveShotDate, exif.cameraModel, filesRoot)
+      const targetDirectory = ensureSubLibraryDirectory(db, filesRoot, targetSubLibraryId)
+      finalDest = ensureUniqueFilePath(path.join(targetDirectory, path.basename(sourcePath)))
+      fs.copyFileSync(sourcePath, finalDest)
+      copiedPath = finalDest
+    }
+
     const stat = fs.statSync(finalDest)
 
     const info = db
       .prepare(
         `INSERT INTO photos (file_path, original_name, file_type, width, height, file_size, sub_library_id, shot_date, content_hash, storage_mode, import_status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'managed', 'ready')`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready')`
       )
       .run(
         finalDest,
@@ -674,7 +807,8 @@ async function importFile(sourcePath: string, options: ImportOptions): Promise<n
         stat.size,
         targetSubLibraryId ?? null,
         effectiveShotDate ?? null,
-        contentHash ?? null
+        contentHash ?? null,
+        storageMode
       )
 
     const photoId = info.lastInsertRowid as number

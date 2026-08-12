@@ -12,7 +12,7 @@ FilmManager 是一款面向胶片摄影爱好者的本地桌面应用，用于�
 - **导入与索引**：递归扫描文件夹，支持 JPG / PNG / TIFF / BMP / WebP 及主流 RAW 格式；导入时自动读取 EXIF（拍摄日期、相机与镜头型号），可自动收录未入库器材；自动识别胶片格式（半格/135/120各规格/6×12 等）
 - **子文件夹卷导入**：批量按子文件夹识别为卷，模糊匹配胶片/相机/镜头属性，逐行确认后批量导入；支持拖放根目录；确认表格可内联新增相机/镜头/胶片格式等属性值
 - **胶卷管理**：将同一胶卷的照片组织为"卷"；支持封面、自动/手动命名、属性一致性验证
-- **双视图切换**：顶栏一键切换卷视图与照片视图；卷视图以卡片展示封面、属性与地点
+- **双视图切换**：顶栏一键切换卷视图与照片视图；卷视图以三档尺寸（小/中/大）独立于照片视图的缩略图尺寸；支持框选与右键多选，可批量编辑属性或删除
 - **属性标注**：相机、胶片、镜头、冲扫方式等多维度，支持批量编辑；胶卷属性附带品牌图标
 - **本地树状子库**：界面子库与 `{libraryRoot}/files/` 下的真实目录树保持一致
 - **三档视图**：小（横向列表）/中（网格）/大（带悬停预览面板）缩略图
@@ -530,18 +530,20 @@ color_profiles.file_path   → {resources/userData}/profiles/{name}.icc
 
 | 方法 | 说明 |
 |---|---|
-| `rolls.list(params?)` | 列出所有卷（含照片数、封面缩略图、属性摘要、地点名）；支持与 photos:list 相同的全部筛选参数 |
+| `rolls.list(params?)` | 列出所有卷（含照片数、封面缩略图、属性摘要、地点名、`shot_date_min`）；支持与 photos:list 相同的全部筛选参数 |
 | `rolls.checkAttrConsistency(photoIds)` | 检查胶卷类型和相机是否一致，返回 `{ ok, warnings[] }` |
 | `rolls.create({ photoIds, name?, subLibraryId? })` | 建卷（自动命名、选封面、关联照片） |
 | `rolls.rename(id, name)` | 重命名卷 |
-| `rolls.delete(id)` | 删除卷记录（照片不受影响） |
+| `rolls.delete(id, deletePhotos?, deleteFiles?)` | 删除卷；`deletePhotos=true` 同时删 DB 照片记录；`deleteFiles=true` 同时删物理文件（linked 模式照片不删文件） |
+| `rolls.batchDelete(ids, deletePhotos?, deleteFiles?)` | 批量删除多个卷（同上语义） |
+| `rolls.batchSetAttributes(ids, attrs)` | 批量为多个卷的所有照片设置属性（`attrs: { typeId, valueId }[]`） |
 | `rolls.photos(rollId\|null, params)` | 分页查询卷内照片；`rollId=null` 返回未分卷照片（unassigned_pr） |
 | `rolls.forPhoto(photoId)` | 查询照片所属卷 |
 | `rolls.removePhotos(rollId, photoIds)` | 从卷中移除照片 |
 | `rolls.addPhotos(rollId, photoIds)` | 向卷中添加照片 |
 | `rolls.setCover(rollId, photoId)` | 设置封面照片 |
 
-**rolls:list 属性摘要**：批量查询每卷所有照片的 film / film_format / camera / lens 属性（DISTINCT，每类型只保留第一个值），以及第一个拍摄地点名称。
+**rolls:list 属性摘要**：批量查询每卷所有照片的 film / film_format / camera / lens 属性（DISTINCT，每类型只保留第一个值），以及第一个拍摄地点名称；`shot_date_min` 为该卷所有照片 `shot_date` 的最小值（SQL `MIN(member.shot_date)`）。
 
 ---
 
@@ -650,7 +652,8 @@ Store 按领域拆分为三个独立 slice，同时保留 `useStore()` 向后兼
 
 | 状态字段 | 说明 |
 |---|---|
-| `thumbnailSize` | `'small' \| 'medium' \| 'large'` |
+| `thumbnailSize` | `'small' \| 'medium' \| 'large'`（照片视图缩略图尺寸） |
+| `rollThumbnailSize` | `'small' \| 'medium' \| 'large'`（卷视图缩略图尺寸，独立于照片视图） |
 | `viewMode` | `'rolls' \| 'photos'` |
 | `activeRoll` | 当前进入卷内部时的 Roll 对象 |
 | `viewerPhoto / viewerPhotos / viewerIndex` | 全屏预览状态 |
@@ -829,13 +832,31 @@ Library.tsx 已从约 530 行的 God Component 拆分为三个自定义 hook，�
 
 ### 8.8 卷视图（RollsView）
 
-**卡片布局**：ResizeObserver 监听容器宽度，≥1400px 时 6 列，否则 4 列；卡片高度 220px
-**封面**：从 `thumbCache`（thumbDataUrl 异步加载）显示，无封面时显示灰色图标；右下角照片数角标（背景模糊）
-**信息栏**：胶片图标+名称（截断）+ 格式 Tag + 地点
+**三档视图尺寸**（由 `rollThumbnailSize` 独立控制，与照片视图 `thumbnailSize` 互不影响）：
+
+| 视图 | 窗口模式 (<1400px) | 宽屏模式 (≥1400px) | 卡片高度 |
+|---|---|---|---|
+| 小（横向列表） | 1 列 | 2 列 | 80px 行高，60×60 封面缩略图 |
+| 中（网格） | 4 列 | 6 列 | 封面 148px + 信息栏 72px |
+| 大（宽网格） | 2 列 | 3 列 | 封面 220px + 信息栏 100px（额外显示相机/镜头/拍摄年月） |
+
+**封面**：从 `thumbCache` 异步加载，无封面时显示灰色图标；右下角照片数角标（背景模糊）
+**信息栏（中/大）**：胶片图标 + 名称（截断）+ 格式 Tag + 地点；大视图另显示相机、镜头、`shot_date_min`（年月）
+**小视图列表**：封面缩略图（60×60）+ 名称 + 胶片名 + 格式 + 照片数，地点 Tooltip
 **重命名**：点击 EditOutlined → 行内 input（autoFocus，blur/Enter 保存，Escape 取消）
-**删除**：Popconfirm 确认（删除卷记录，照片不受影响）
 **地点设置**：EnvironmentOutlined 按钮打开 Popover（显示当前地点 + 清除按钮 + LocationPicker）；批量为该卷所有照片 setForPhotos
 **"其他图片"卡片**：虚线边框，点击进入未分卷照片视图
+
+**多选与框选**
+
+- **橡皮筋框选**：在卡片空白区域 mousedown 启动拖拽，松开时命中卡片坐标矩形（小视图按行高区间，中/大视图按网格格子坐标）
+- **Ctrl/Meta/Shift 点击**：逐一切换单张卷的选中状态
+- **右键菜单**：右键点击未选中卡片时替换当前选中集；菜单项：重命名（仅单选）、批量编辑属性、删除
+
+**批量操作**
+
+- **批量属性编辑**：Modal 中为所有选中卷的全部照片批量设置胶片/相机/镜头等属性（调用 `rolls.batchSetAttributes`）
+- **删除**：三档 Radio 选项——仅删除卷索引 / 同时删除数据库照片 / 同时删除物理文件；linked 模式照片即使选"删除文件"也只删 DB 记录
 
 ### 8.9 胶卷库（FilmLibraryModal）
 

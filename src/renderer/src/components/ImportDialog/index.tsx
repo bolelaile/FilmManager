@@ -83,6 +83,8 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
   const [rootFileCount, setRootFileCount] = useState(0)
   const [rowConfigs, setRowConfigs] = useState<RowConfig[]>([])
   const [scanning, setScanning] = useState(false)
+  const [rollStorageMode, setRollStorageMode] = useState<StorageMode>('managed')
+  const [singleFolderMode, setSingleFolderMode] = useState(false)
   // per-row film picker
   const [filmPickerRowIdx, setFilmPickerRowIdx] = useState<number | null>(null)
   // all locations for picker (loaded once)
@@ -124,6 +126,8 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
       setCreateRollEnabled(false)
       setSingleRollName('')
       setStorageMode('managed')
+      setRollStorageMode('managed')
+      setSingleFolderMode(false)
       setRollDragging(false)
       rollDragCounter.current = 0
       cleanupRef.current.forEach((fn) => fn())
@@ -282,12 +286,46 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
           rollName: folder.inferredRollName || folder.name,
           attrs: attrMap,
           matchedAliases: aliasMap,
-          locationId: null,
+          locationId: folder.parsedLocationId ?? null,
           shotDate: folder.parsedDate,
           createRoll: true
         }
       })
       setRowConfigs(configs)
+      setStep('confirm')
+    } finally {
+      setScanning(false)
+    }
+  }
+
+  const handleScanSingleFolder = async (folderPath?: string) => {
+    setScanning(true)
+    try {
+      const result = await window.api.import.scanSingleFolder(folderPath) as {
+        folderPath: string
+        folder: FolderScanResult
+      } | null
+      if (!result) { setScanning(false); return }
+
+      setScannedFolders([result.folder])
+      setRootFileCount(0)
+
+      const folder = result.folder
+      const attrMap: Record<number, number | null> = {}
+      const aliasMap: Record<number, string | null> = {}
+      for (const m of folder.matches) {
+        attrMap[m.typeId] = m.valueId
+        aliasMap[m.typeId] = m.matchedAlias ?? null
+      }
+      setRowConfigs([{
+        folder,
+        rollName: folder.inferredRollName || folder.name,
+        attrs: attrMap,
+        matchedAliases: aliasMap,
+        locationId: folder.parsedLocationId ?? null,
+        shotDate: folder.parsedDate,
+        createRoll: true
+      }])
       setStep('confirm')
     } finally {
       setScanning(false)
@@ -310,7 +348,8 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
       locationId: rc.locationId,
       shotDate: rc.shotDate,
       subLibraryId: subLibId ?? null,
-      createRoll: rc.createRoll
+      createRoll: rc.createRoll,
+      storageMode: rollStorageMode
     }))
 
     try {
@@ -420,46 +459,120 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
             {rollModeEnabled ? (
               /* ── roll mode: drag zone + scan button ── */
               <>
-                {/* 拖入文件夹区域 */}
-                <div
-                  onDragEnter={(e) => { e.preventDefault(); rollDragCounter.current++; setRollDragging(true) }}
-                  onDragLeave={(e) => { e.preventDefault(); rollDragCounter.current--; if (rollDragCounter.current === 0) setRollDragging(false) }}
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={(e) => {
-                    e.preventDefault()
-                    rollDragCounter.current = 0
-                    setRollDragging(false)
-                    const paths: string[] = []
-                    for (const file of Array.from(e.dataTransfer.files)) paths.push((file as any).path)
-                    const dir = paths.find((p) => p) ?? null
-                    if (dir) handleScanFolders(dir)
-                  }}
-                  style={{
-                    border: `2px dashed ${rollDragging ? '#c8832a' : '#333'}`,
-                    borderRadius: 8, padding: '16px 12px', textAlign: 'center',
-                    background: rollDragging ? 'rgba(200,131,42,0.08)' : '#111',
-                    transition: 'all 0.2s', cursor: 'default'
-                  }}
+                {/* 单文件夹 / 多子文件夹 切换 */}
+                <Radio.Group
+                  value={singleFolderMode ? 'single' : 'multi'}
+                  onChange={(e) => setSingleFolderMode(e.target.value === 'single')}
+                  style={{ width: '100%', marginBottom: 4 }}
                 >
-                  <InboxOutlined style={{ fontSize: 28, color: rollDragging ? '#c8832a' : '#444', marginBottom: 6 }} />
-                  <div style={{ color: rollDragging ? '#c8832a' : '#666', fontSize: 13 }}>
-                    将包含子文件夹的根目录拖放至此处
-                  </div>
-                  <div style={{ color: '#444', fontSize: 11, marginTop: 3 }}>每个子文件夹将被识别为一卷</div>
-                </div>
-                <div style={{ color: '#666', fontSize: 11, textAlign: 'center', margin: '2px 0' }}>或</div>
-                <Button
-                  type="primary"
-                  block
-                  size="large"
-                  icon={scanning ? <LoadingOutlined /> : <FolderOpenOutlined />}
-                  onClick={() => handleScanFolders()}
-                  loading={scanning}
-                  style={{ background: '#c8832a', borderColor: '#c8832a' }}
-                >
-                  选择根目录并扫描
-                </Button>
+                  <Space style={{ width: '100%' }} size={8}>
+                    <Radio value="multi" style={{ color: '#bbb', fontSize: 12 }}>多子文件夹（每个子文件夹为一卷）</Radio>
+                    <Radio value="single" style={{ color: '#bbb', fontSize: 12 }}>单文件夹（整个文件夹为一卷）</Radio>
+                  </Space>
+                </Radio.Group>
+
+                {!singleFolderMode ? (
+                  <>
+                    {/* 拖入文件夹区域（多子文件夹模式） */}
+                    <div
+                      onDragEnter={(e) => { e.preventDefault(); rollDragCounter.current++; setRollDragging(true) }}
+                      onDragLeave={(e) => { e.preventDefault(); rollDragCounter.current--; if (rollDragCounter.current === 0) setRollDragging(false) }}
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) => {
+                        e.preventDefault()
+                        rollDragCounter.current = 0
+                        setRollDragging(false)
+                        const paths: string[] = []
+                        for (const file of Array.from(e.dataTransfer.files)) paths.push((file as any).path)
+                        const dir = paths.find((p) => p) ?? null
+                        if (dir) handleScanFolders(dir)
+                      }}
+                      style={{
+                        border: `2px dashed ${rollDragging ? '#c8832a' : '#333'}`,
+                        borderRadius: 8, padding: '16px 12px', textAlign: 'center',
+                        background: rollDragging ? 'rgba(200,131,42,0.08)' : '#111',
+                        transition: 'all 0.2s', cursor: 'default'
+                      }}
+                    >
+                      <InboxOutlined style={{ fontSize: 28, color: rollDragging ? '#c8832a' : '#444', marginBottom: 6 }} />
+                      <div style={{ color: rollDragging ? '#c8832a' : '#666', fontSize: 13 }}>
+                        将包含子文件夹的根目录拖放至此处
+                      </div>
+                      <div style={{ color: '#444', fontSize: 11, marginTop: 3 }}>每个子文件夹将被识别为一卷</div>
+                    </div>
+                    <div style={{ color: '#666', fontSize: 11, textAlign: 'center', margin: '2px 0' }}>或</div>
+                    <Button
+                      type="primary" block size="large"
+                      icon={scanning ? <LoadingOutlined /> : <FolderOpenOutlined />}
+                      onClick={() => handleScanFolders()} loading={scanning}
+                      style={{ background: '#c8832a', borderColor: '#c8832a' }}
+                    >
+                      选择根目录并扫描
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    {/* 单文件夹模式 */}
+                    <div
+                      onDragEnter={(e) => { e.preventDefault(); rollDragCounter.current++; setRollDragging(true) }}
+                      onDragLeave={(e) => { e.preventDefault(); rollDragCounter.current--; if (rollDragCounter.current === 0) setRollDragging(false) }}
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) => {
+                        e.preventDefault()
+                        rollDragCounter.current = 0
+                        setRollDragging(false)
+                        const paths: string[] = []
+                        for (const file of Array.from(e.dataTransfer.files)) paths.push((file as any).path)
+                        const dir = paths.find((p) => p) ?? null
+                        if (dir) handleScanSingleFolder(dir)
+                      }}
+                      style={{
+                        border: `2px dashed ${rollDragging ? '#c8832a' : '#333'}`,
+                        borderRadius: 8, padding: '16px 12px', textAlign: 'center',
+                        background: rollDragging ? 'rgba(200,131,42,0.08)' : '#111',
+                        transition: 'all 0.2s', cursor: 'default'
+                      }}
+                    >
+                      <InboxOutlined style={{ fontSize: 28, color: rollDragging ? '#c8832a' : '#444', marginBottom: 6 }} />
+                      <div style={{ color: rollDragging ? '#c8832a' : '#666', fontSize: 13 }}>
+                        将文件夹拖放至此处，整个文件夹作为一卷导入
+                      </div>
+                    </div>
+                    <div style={{ color: '#666', fontSize: 11, textAlign: 'center', margin: '2px 0' }}>或</div>
+                    <Button
+                      type="primary" block size="large"
+                      icon={scanning ? <LoadingOutlined /> : <FolderOpenOutlined />}
+                      onClick={() => handleScanSingleFolder()} loading={scanning}
+                      style={{ background: '#c8832a', borderColor: '#c8832a' }}
+                    >
+                      选择文件夹作为一卷
+                    </Button>
+                  </>
+                )}
+
                 <Divider style={{ borderColor: '#252525', margin: '0' }} />
+
+                {/* 存储方式（卷模式） */}
+                <div>
+                  <div style={{ color: '#888', fontSize: 12, marginBottom: 8 }}>存储方式</div>
+                  <Radio.Group value={rollStorageMode} onChange={(e) => setRollStorageMode(e.target.value)} style={{ width: '100%' }}>
+                    <Space direction="vertical" style={{ width: '100%' }} size={6}>
+                      <Radio value="managed" style={{ color: '#ccc', alignItems: 'flex-start' }}>
+                        <div>
+                          <span style={{ fontSize: 13 }}><CopyOutlined style={{ marginRight: 5, color: '#c8832a' }} />复制到图库</span>
+                          <div style={{ color: '#555', fontSize: 11, marginTop: 2 }}>将文件复制到 FilmManager 管理目录</div>
+                        </div>
+                      </Radio>
+                      <Radio value="linked" style={{ color: '#ccc', alignItems: 'flex-start' }}>
+                        <div>
+                          <span style={{ fontSize: 13 }}><LinkOutlined style={{ marginRight: 5, color: '#c8832a' }} />建立索引</span>
+                          <div style={{ color: '#555', fontSize: 11, marginTop: 2 }}>只记录原始路径，不复制文件</div>
+                        </div>
+                      </Radio>
+                    </Space>
+                  </Radio.Group>
+                </div>
+
                 <div style={{ color: '#888', fontSize: 12, marginBottom: 4 }}>导入到子库（可选）</div>
                 <Select
                   style={{ width: '100%' }}
@@ -741,6 +854,14 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
 
             <div style={{ color: '#888', fontSize: 12, marginBottom: 8 }}>导入到子库（可选，应用于所有卷）</div>
             <Select style={{ width: '100%', marginBottom: 12 }} value={subLibId} onChange={setSubLibId} options={subLibOptions as never} placeholder="选择子库..." />
+
+            <div style={{ color: '#888', fontSize: 12, marginBottom: 8 }}>存储方式</div>
+            <Radio.Group value={rollStorageMode} onChange={(e) => setRollStorageMode(e.target.value)} style={{ width: '100%', marginBottom: 12 }}>
+              <Space size={16}>
+                <Radio value="managed" style={{ color: '#ccc', fontSize: 12 }}><CopyOutlined style={{ marginRight: 4, color: '#c8832a' }} />复制到图库</Radio>
+                <Radio value="linked" style={{ color: '#ccc', fontSize: 12 }}><LinkOutlined style={{ marginRight: 4, color: '#c8832a' }} />建立索引</Radio>
+              </Space>
+            </Radio.Group>
 
             <Space>
               <Button onClick={() => setStep('select')} style={{ background: '#1a1a1a', borderColor: '#333', color: '#888' }}>返回</Button>

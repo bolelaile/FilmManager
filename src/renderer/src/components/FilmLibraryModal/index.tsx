@@ -219,10 +219,10 @@ export default function FilmLibraryModal({ open, attrTypes, onClose, onChanged }
         width={580}
         mask={false}
         styles={{
-          content: { background: '#1a1a1a', border: '1px solid #353535', boxShadow: '0 8px 40px rgba(0,0,0,0.85)' },
-          header: { background: '#1a1a1a', borderBottom: '1px solid #252525' },
-          footer: { background: '#1a1a1a', borderTop: '1px solid #252525', padding: '12px 16px' },
-          body: { padding: '12px 16px', maxHeight: 500, overflowY: 'auto' }
+          content: { background: '#1a1a1a', border: '1px solid #353535', boxShadow: '0 8px 40px rgba(0,0,0,0.85)', borderRadius: 8 },
+          header: { background: '#1a1a1a', borderBottom: '1px solid #252525', borderRadius: '8px 8px 0 0' },
+          footer: { background: '#1a1a1a', borderTop: '1px solid #252525', padding: '12px 20px', borderRadius: '0 0 8px 8px' },
+          body: { padding: '12px 20px', maxHeight: 500, overflowY: 'auto' }
         }}
       >
         {loading ? (
@@ -330,9 +330,9 @@ export default function FilmLibraryModal({ open, attrTypes, onClose, onChanged }
         width={420}
         mask={false}
         styles={{
-          content: { background: '#1a1a1a', border: '1px solid #353535', boxShadow: '0 8px 40px rgba(0,0,0,0.85)' },
-          header: { background: '#1a1a1a', borderBottom: '1px solid #252525' },
-          footer: { background: '#1a1a1a', borderTop: '1px solid #252525' }
+          content: { background: '#1a1a1a', border: '1px solid #353535', boxShadow: '0 8px 40px rgba(0,0,0,0.85)', borderRadius: 8 },
+          header: { background: '#1a1a1a', borderBottom: '1px solid #252525', borderRadius: '8px 8px 0 0' },
+          footer: { background: '#1a1a1a', borderTop: '1px solid #252525', padding: '12px 20px', borderRadius: '0 0 8px 8px' }
         }}
       >
         <Space direction="vertical" style={{ width: '100%', marginTop: 8 }} size={12}>

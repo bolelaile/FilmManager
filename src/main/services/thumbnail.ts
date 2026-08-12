@@ -239,6 +239,8 @@ export interface ExifData {
   cameraModel: string | null
   lensMake: string | null
   lensModel: string | null
+  gpsLat: number | null
+  gpsLng: number | null
 }
 
 const MAKER_ALIASES: { pattern: RegExp; name: string }[] = [
@@ -264,7 +266,7 @@ const MAKER_ALIASES: { pattern: RegExp; name: string }[] = [
 ]
 
 function emptyExifData(): ExifData {
-  return { shotDate: null, cameraMake: null, cameraModel: null, lensMake: null, lensModel: null }
+  return { shotDate: null, cameraMake: null, cameraModel: null, lensMake: null, lensModel: null, gpsLat: null, gpsLng: null }
 }
 
 function cleanMetadataText(value: unknown): string | null {
@@ -317,6 +319,15 @@ function formatExifDate(value: unknown): string | null {
   return value.toISOString().slice(0, 10)
 }
 
+function parseGpsDms(dms: unknown, ref: unknown): number | null {
+  if (!Array.isArray(dms) || dms.length < 3) return null
+  const [deg, min, sec] = dms as number[]
+  if (typeof deg !== 'number' || typeof min !== 'number' || typeof sec !== 'number') return null
+  const decimal = deg + min / 60 + sec / 3600
+  const refStr = typeof ref === 'string' ? ref.toUpperCase() : ''
+  return (refStr === 'S' || refStr === 'W') ? -decimal : decimal
+}
+
 export function parseExifBuffer(buffer: Buffer): ExifData {
   try {
     const metadata = exifReader(buffer)
@@ -336,7 +347,11 @@ export function parseExifBuffer(buffer: Buffer): ExifData {
       photo?.LensModel ?? image?.LensModel
     )
 
-    return { shotDate, cameraMake, cameraModel, lensMake, lensModel }
+    const gps = metadata.GPSInfo as Record<string, unknown> | undefined
+    const gpsLat = parseGpsDms(gps?.GPSLatitude, gps?.GPSLatitudeRef)
+    const gpsLng = parseGpsDms(gps?.GPSLongitude, gps?.GPSLongitudeRef)
+
+    return { shotDate, cameraMake, cameraModel, lensMake, lensModel, gpsLat, gpsLng }
   } catch (err) {
     log.debug('EXIF parse failed', err)
     return emptyExifData()

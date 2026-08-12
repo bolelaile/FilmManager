@@ -26,6 +26,7 @@ export function registerPhotosIpc(): void {
         organizationStatuses?: ('unclassified' | 'missing_date' | 'missing_camera')[]
         sortBy?: 'imported_at' | 'shot_date' | 'file_name'
         sortOrder?: 'asc' | 'desc'
+        starredOnly?: boolean
       }
     ) => {
       try {
@@ -42,7 +43,8 @@ export function registerPhotosIpc(): void {
         fileTypes = [],
         organizationStatuses = [],
         sortBy = 'imported_at',
-        sortOrder = 'desc'
+        sortOrder = 'desc',
+        starredOnly = false
       } = params
       const offset = (page - 1) * pageSize
       const sortExpression = sortBy === 'file_name'
@@ -100,6 +102,9 @@ export function registerPhotosIpc(): void {
           JOIN attribute_types status_at ON status_at.id = status_pa.attribute_type_id
           WHERE status_pa.photo_id = p.id AND status_at.key = 'camera'
         )`)
+      }
+      if (starredOnly) {
+        wheres.push('p.starred = 1')
       }
 
       if (wheres.length) fromClause += ' WHERE ' + wheres.join(' AND ')
@@ -343,6 +348,25 @@ export function registerPhotosIpc(): void {
       photoIds,
       subLibraryId
     )
+  })
+
+  // 切换单张照片的收藏状态
+  ipcMain.handle('photos:toggleStar', (_, photoId: number) => {
+    const db = getDb()
+    const row = db.prepare('SELECT starred FROM photos WHERE id = ?').get(photoId) as { starred: number } | undefined
+    if (!row) return false
+    const newVal = row.starred ? 0 : 1
+    db.prepare('UPDATE photos SET starred = ? WHERE id = ?').run(newVal, photoId)
+    return newVal === 1
+  })
+
+  // 批量设置收藏状态
+  ipcMain.handle('photos:batchStar', (_, photoIds: number[], starred: boolean) => {
+    const db = getDb()
+    const val = starred ? 1 : 0
+    const stmt = db.prepare('UPDATE photos SET starred = ? WHERE id = ?')
+    db.transaction(() => { for (const id of photoIds) stmt.run(val, id) })()
+    return true
   })
 }
 

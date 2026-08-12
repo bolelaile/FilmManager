@@ -61,7 +61,8 @@ export function usePhotoLoader(
           fileTypes: filter.fileTypes,
           organizationStatuses: filter.organizationStatuses,
           sortBy: filter.sortBy,
-          sortOrder: filter.sortOrder
+          sortOrder: filter.sortOrder,
+          starredOnly: filter.starredOnly
         }) as { total: number; rows: Photo[] }
       }
       if (myCount !== loadCounterRef.current) return

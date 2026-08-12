@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { Spin, Button, Select, Divider, DatePicker, Input, message, Modal, Tooltip, Popover } from 'antd'
-import { FolderOpenOutlined, PlusOutlined, PictureOutlined, RotateRightOutlined, EnvironmentOutlined, CloseOutlined, AppstoreOutlined, LoadingOutlined } from '@ant-design/icons'
+import { FolderOpenOutlined, PlusOutlined, PictureOutlined, RotateRightOutlined, EnvironmentOutlined, CloseOutlined, AppstoreOutlined, LoadingOutlined, StarFilled } from '@ant-design/icons'
 import { useStore } from '../../store'
 import type { Photo, IccProfile, AttributeType, AttributeValue, Location } from '../../types'
 import { FilmTag, FilmIconPicker } from '../FilmIcon'
@@ -443,6 +443,20 @@ export default function PhotoViewer({ attrTypes, onAttrChanged }: PhotoViewerPro
             {scale !== 1 && <span style={{ color: '#c8832a', marginLeft: 10, fontSize: 11 }}>{Math.round(scale * 100)}%</span>}
           </span>
           <span style={{ color: '#555', fontSize: 12 }}>{viewerIndex + 1} / {viewerPhotos.length}</span>
+          <Tooltip title={basePhoto?.starred ? '取消收藏' : '加入收藏'}>
+            <Button
+              size="small"
+              icon={<StarFilled />}
+              onClick={async (e) => {
+                e.stopPropagation()
+                if (!basePhoto) return
+                await window.api.photos.toggleStar(basePhoto.id)
+                setLivePhoto({ ...(photo ?? basePhoto), starred: basePhoto.starred ? 0 : 1 })
+                window.dispatchEvent(new CustomEvent('photo-star-changed', { detail: { id: basePhoto.id } }))
+              }}
+              style={{ background: '#1f1f1f', borderColor: '#333', color: basePhoto?.starred ? '#c8832a' : '#555' }}
+            />
+          </Tooltip>
           <Tooltip title="顺时针旋转 90°">
             <Button
               size="small"

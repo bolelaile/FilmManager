@@ -6,6 +6,7 @@ import { spawn } from 'child_process'
 import log from 'electron-log'
 import { initDb } from './db/index'
 import { initIpc } from './ipc/index'
+import { thumbnailPool } from './workers/worker-pool'
 
 // 捕获主进程未处理异常，记录日志并弹窗提示（防止无声崩溃）
 process.on('uncaughtException', (err) => {
@@ -104,6 +105,9 @@ app.whenReady().then(() => {
   const libraryRoot = getLibraryRoot()
   log.info('Library root:', libraryRoot)
 
+  // 启动缩略图 Worker Pool（4 线程并发生成）
+  thumbnailPool.start()
+
   let initError: string | null = null
   try {
     initDb(libraryRoot)
@@ -135,6 +139,7 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
+  thumbnailPool.terminate()
   if (process.platform !== 'darwin') app.quit()
 })
 

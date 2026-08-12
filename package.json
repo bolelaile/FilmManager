@@ -1,6 +1,6 @@
 {
   "name": "film-manager",
-  "version": "1.3.3",
+  "version": "1.3.4",
   "description": "胶片扫描文件管理应用",
   "main": "out/main/index.js",
   "scripts": {

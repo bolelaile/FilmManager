@@ -20,20 +20,13 @@ const COLS: Record<'small' | 'medium' | 'large', { normal: number; wide: number 
   large:  { normal: 2, wide: 3 },
 }
 
-// 封面图高度
-const COVER_H: Record<'small' | 'medium' | 'large', number> = {
-  small:  60,
-  medium: 148,
-  large:  220,
-}
-// 信息区高度（小视图 cover 与信息同行，不叠加）
-const INFO_H: Record<'small' | 'medium' | 'large', number> = {
-  small:  0,
-  medium: 72,
-  large:  100,
-}
-// 小视图行高（独立于卡片高度计算）
-const SMALL_ROW = 80
+// 封面图高度（medium 固定）
+const COVER_H_MEDIUM = 148
+const INFO_H_MEDIUM  = 72
+// 小视图行高
+const SMALL_ROW  = 80
+// 大视图横向行高（方案A：左封面55% + 右信息45%，固定高度）
+const LARGE_ROW_H = 220
 
 // ── 类型 ──────────────────────────────────────────────────────────────────────
 interface RollsViewProps {
@@ -101,13 +94,19 @@ export default function RollsView({
 
   // 布局计算
   const cols = containerWidth >= WIDE_THRESHOLD ? COLS[size].wide : COLS[size].normal
-  const isSmall = size === 'small'
-  const cardWidth = isSmall
+  const isSmall  = size === 'small'
+  const isLarge  = size === 'large'
+  // 大视图：横向行，宽度 = 两列平铺（1 col 时全宽，2 col 时各占一半）
+  const largeRowWidth = containerWidth > 0
+    ? Math.floor((containerWidth - 40 - COL_GAP * (cols - 1)) / cols)
+    : 400
+  // 中视图：网格卡片宽度
+  const cardWidth = isSmall || isLarge
     ? 0
     : containerWidth > 0
-      ? Math.floor((containerWidth - COL_GAP * (cols - 1)) / cols)
+      ? Math.floor((containerWidth - 40 - COL_GAP * (cols - 1)) / cols)
       : 200
-  const cardHeight = isSmall ? SMALL_ROW : COVER_H[size] + INFO_H[size]
+  const cardHeight = isSmall ? SMALL_ROW : isLarge ? LARGE_ROW_H : COVER_H_MEDIUM + INFO_H_MEDIUM
 
   // ResizeObserver
   useEffect(() => {
@@ -235,6 +234,12 @@ export default function RollsView({
         // 小视图：按行框选（全宽）
         const cy = row * (SMALL_ROW + ROW_GAP)
         if (cy < selY + selH && cy + SMALL_ROW > selY) hit.push(roll.id)
+      } else if (isLarge) {
+        // 大视图：横向详情行，宽度 = largeRowWidth
+        const cx = col * (largeRowWidth + COL_GAP)
+        const cy = row * (LARGE_ROW_H + ROW_GAP)
+        if (cx < selX + selW && cx + largeRowWidth > selX &&
+            cy < selY + selH && cy + LARGE_ROW_H > selY) hit.push(roll.id)
       } else {
         const cx = col * (cardWidth + COL_GAP)
         const cy = row * (cardHeight + ROW_GAP)
@@ -362,8 +367,39 @@ export default function RollsView({
                 <OtherPhotosSmallRow count={photolessCount} onClick={onOtherPhotosClick} />
               )}
             </div>
+          ) : isLarge ? (
+            /* ── 大视图：横向详情行（方案 A）───────────────────────────── */
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: `repeat(${cols}, ${largeRowWidth}px)`,
+              gap: `${ROW_GAP}px ${COL_GAP}px`
+            }}>
+              {rolls.map((roll) => (
+                <LargeRollRow
+                  key={roll.id}
+                  roll={roll}
+                  rowWidth={largeRowWidth}
+                  thumbUrl={thumbCache[roll.id]}
+                  filmType={filmType}
+                  filmFormatType={filmFormatType}
+                  selected={selectedIds.has(roll.id)}
+                  renamingId={renamingId}
+                  renameName={renameName}
+                  onSetRenamingId={setRenamingId}
+                  onSetRenameName={setRenameName}
+                  onRename={handleRename}
+                  onRollClick={onRollClick}
+                  onToggleSelect={toggleSelect}
+                  onContextMenu={handleContextMenu}
+                  onLocationChanged={onRollLocationChanged}
+                />
+              ))}
+              {photolessCount > 0 && (
+                <OtherPhotosLargeRow rowWidth={largeRowWidth} count={photolessCount} onClick={onOtherPhotosClick} />
+              )}
+            </div>
           ) : (
-            /* ── 中 / 大视图：卡片网格 ──────────────────────────────────── */
+            /* ── 中视图：卡片网格 ──────────────────────────────────────── */
             <div style={{
               display: 'grid',
               gridTemplateColumns: `repeat(${cols}, ${cardWidth}px)`,
@@ -373,7 +409,6 @@ export default function RollsView({
                 <RollCard
                   key={roll.id}
                   roll={roll}
-                  size={size}
                   cardWidth={cardWidth}
                   thumbUrl={thumbCache[roll.id]}
                   filmType={filmType}
@@ -391,7 +426,7 @@ export default function RollsView({
                 />
               ))}
               {photolessCount > 0 && (
-                <OtherPhotosCard size={size} cardWidth={cardWidth} count={photolessCount} onClick={onOtherPhotosClick} />
+                <OtherPhotosCard cardWidth={cardWidth} count={photolessCount} onClick={onOtherPhotosClick} />
               )}
             </div>
           )}
@@ -462,7 +497,12 @@ export default function RollsView({
           <Button key="cancel" onClick={() => setDeleteOpen(false)} style={{ background: '#1a1a1a', borderColor: '#333', color: '#888' }}>取消</Button>,
           <Button key="ok" danger loading={deleting} onClick={handleDelete}>确认删除</Button>
         ]}
-        styles={{ content: { background: '#1a1a1a', border: '1px solid #333' }, header: { background: '#1a1a1a', borderBottom: '1px solid #252525' } }}
+        styles={{
+          content:  { background: '#1a1a1a', border: '1px solid #333', borderRadius: 8 },
+          header:   { background: '#1a1a1a', borderBottom: '1px solid #252525', borderRadius: '8px 8px 0 0' },
+          footer:   { background: '#1a1a1a', borderTop: '1px solid #252525', padding: '12px 20px', borderRadius: '0 0 8px 8px' },
+          body:     { padding: '16px 20px' }
+        }}
       >
         <Radio.Group value={deleteMode} onChange={(e) => setDeleteMode(e.target.value)} style={{ width: '100%' }}>
           <Space direction="vertical" style={{ width: '100%' }} size={10}>
@@ -497,7 +537,12 @@ export default function RollsView({
           <Button key="cancel" onClick={() => { setBatchAttrOpen(false); setBatchAttrs({}) }} style={{ background: '#1a1a1a', borderColor: '#333', color: '#888' }}>取消</Button>,
           <Button key="ok" type="primary" onClick={handleBatchSetAttrs} style={{ background: '#c8832a', borderColor: '#c8832a' }}>应用</Button>
         ]}
-        styles={{ content: { background: '#1a1a1a', border: '1px solid #333' }, header: { background: '#1a1a1a', borderBottom: '1px solid #252525' } }}
+        styles={{
+          content:  { background: '#1a1a1a', border: '1px solid #333', borderRadius: 8 },
+          header:   { background: '#1a1a1a', borderBottom: '1px solid #252525', borderRadius: '8px 8px 0 0' },
+          footer:   { background: '#1a1a1a', borderTop: '1px solid #252525', padding: '12px 20px', borderRadius: '0 0 8px 8px' },
+          body:     { padding: '16px 20px' }
+        }}
       >
         <div style={{ color: '#888', fontSize: 12, marginBottom: 12 }}>
           选择要批量设置的属性（仅勾选的属性会被覆盖，未选择的保持原值）
@@ -698,10 +743,9 @@ function SmallRollRow({
   )
 }
 
-// ── 中/大视图卡片 ─────────────────────────────────────────────────────────────
+// ── 中视图卡片 ────────────────────────────────────────────────────────────────
 interface RollCardProps {
   roll: Roll
-  size: 'medium' | 'large'
   cardWidth: number
   thumbUrl?: string
   filmType?: AttributeType
@@ -719,7 +763,7 @@ interface RollCardProps {
 }
 
 function RollCard({
-  roll, size, cardWidth, thumbUrl, filmType, filmFormatType,
+  roll, cardWidth, thumbUrl, filmType, filmFormatType,
   selected, renamingId, renameName,
   onSetRenamingId, onSetRenameName, onRename,
   onRollClick, onToggleSelect, onContextMenu, onLocationChanged
@@ -727,11 +771,7 @@ function RollCard({
   const isRenaming = renamingId === roll.id
   const filmAttr       = roll.attributes.find((a) => a.key === 'film')
   const filmFormatAttr = roll.attributes.find((a) => a.key === 'film_format')
-  const cameraAttr     = roll.attributes.find((a) => a.key === 'camera')
-  const lensAttr       = roll.attributes.find((a) => a.key === 'lens')
   const [locationPopoverOpen, setLocationPopoverOpen] = useState(false)
-
-  const coverH = COVER_H[size]
 
   const handleSetLocation = async (loc: Location) => {
     const result = await window.api.rolls.photos(roll.id, { page: 1, pageSize: 9999, filters: {}, sortBy: 'shot_date', sortOrder: 'asc' }) as { rows: { id: number }[] }
@@ -749,12 +789,6 @@ function RollCard({
     setLocationPopoverOpen(false)
     onLocationChanged?.()
   }
-
-  // 拍摄日期：取卷内第一张照片的 shot_date（通过 created_at 作为代理，实际精确值要从照片里取）
-  // 这里我们直接从 rolls 列表里拿不到日期，用占位 `—`；后续如需精确日期可扩展 rolls:list 返回
-  const shotDateDisplay = roll.shot_date_min
-    ? String(roll.shot_date_min).slice(0, 7)
-    : null
 
   const locationPopoverContent = (
     <div style={{ width: 280 }} onClick={(e) => e.stopPropagation()}>
@@ -782,12 +816,9 @@ function RollCard({
       style={{
         width: cardWidth,
         background: selected ? '#1e2a12' : '#1e1e1e',
-        borderRadius: 8,
-        overflow: 'hidden',
+        borderRadius: 8, overflow: 'hidden',
         border: `1px solid ${selected ? '#6aaa3a' : '#2a2a2a'}`,
-        cursor: 'pointer',
-        transition: 'border-color 0.15s, background 0.15s',
-        flexShrink: 0
+        cursor: 'pointer', transition: 'border-color 0.15s, background 0.15s', flexShrink: 0
       }}
       onMouseEnter={(e) => { if (!selected) (e.currentTarget as HTMLDivElement).style.borderColor = '#c8832a' }}
       onMouseLeave={(e) => { if (!selected) (e.currentTarget as HTMLDivElement).style.borderColor = selected ? '#6aaa3a' : '#2a2a2a' }}
@@ -798,7 +829,7 @@ function RollCard({
       onContextMenu={(e) => { e.preventDefault(); onContextMenu(roll, e.clientX, e.clientY) }}
     >
       {/* 封面图 */}
-      <div style={{ width: '100%', height: coverH, background: '#111', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', position: 'relative' }}>
+      <div style={{ width: '100%', height: COVER_H_MEDIUM, background: '#111', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', position: 'relative' }}>
         {thumbUrl
           ? <img src={thumbUrl} alt={roll.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} draggable={false} />
           : <PictureOutlined style={{ fontSize: 36, color: '#333' }} />
@@ -810,10 +841,8 @@ function RollCard({
 
       {/* 信息区 */}
       <div style={{ padding: '8px 10px' }} onClick={(e) => e.stopPropagation()}>
-        {/* 卷名 */}
         {isRenaming ? (
-          <Input
-            autoFocus size="small" value={renameName}
+          <Input autoFocus size="small" value={renameName}
             onChange={(e) => onSetRenameName(e.target.value)}
             onBlur={() => onRename(roll.id)}
             onKeyDown={(e) => {
@@ -824,15 +853,11 @@ function RollCard({
             style={{ background: '#333', borderColor: '#c8832a', color: '#ccc', width: '100%', marginBottom: 4 }}
           />
         ) : (
-          <div
-            style={{ color: '#ddd', fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 4, cursor: 'pointer' }}
-            onClick={(e) => { e.stopPropagation(); onRollClick(roll) }}
-          >
+          <div style={{ color: '#ddd', fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 4, cursor: 'pointer' }}
+            onClick={(e) => { e.stopPropagation(); onRollClick(roll) }}>
             {roll.name}
           </div>
         )}
-
-        {/* 胶片 + 格式 */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', minHeight: 20 }}>
           {filmAttr && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
@@ -846,66 +871,241 @@ function RollCard({
             </Tag>
           )}
         </div>
-
-        {/* 大视图专属：相机 + 镜头 + 地点 + 日期 */}
-        {size === 'large' && (
-          <div style={{ marginTop: 4 }}>
-            {cameraAttr && (
-              <div style={{ color: '#777', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                📷 {cameraAttr.value}{lensAttr ? `  🔭 ${lensAttr.value}` : ''}
-              </div>
-            )}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 3 }}>
-              {roll.location_name && (
-                <span style={{ color: '#666', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 90 }}>
-                  <EnvironmentOutlined style={{ marginRight: 2 }} />{roll.location_name}
-                </span>
-              )}
-              {shotDateDisplay && <span style={{ color: '#555', fontSize: 11, flexShrink: 0 }}>{shotDateDisplay}</span>}
-            </div>
-          </div>
-        )}
-
-        {/* 中视图：地点 */}
-        {size === 'medium' && roll.location_name && (
+        {roll.location_name && (
           <div style={{ color: '#666', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 3 }}>
             <EnvironmentOutlined style={{ marginRight: 2 }} />{roll.location_name}
           </div>
         )}
-
-        {/* 操作按钮 */}
         <div style={{ display: 'flex', gap: 4, marginTop: 6, justifyContent: 'flex-end' }}>
           <Popover
             content={locationPopoverContent}
             title={<span style={{ color: '#aaa', fontSize: 12 }}>设置拍摄地点</span>}
-            trigger="click"
-            open={locationPopoverOpen}
-            onOpenChange={(v) => setLocationPopoverOpen(v)}
+            trigger="click" open={locationPopoverOpen} onOpenChange={(v) => setLocationPopoverOpen(v)}
             overlayStyle={{ zIndex: 2000 }}
             overlayInnerStyle={{ background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 8 }}
           >
             <Tooltip title="设置地点">
-              <button
-                style={{ background: 'transparent', border: 'none', color: roll.location_name ? '#c8832a' : '#555', cursor: 'pointer', padding: '2px 4px', fontSize: 12 }}
-                onClick={(e) => e.stopPropagation()}
-              >
+              <button style={{ background: 'transparent', border: 'none', color: roll.location_name ? '#c8832a' : '#555', cursor: 'pointer', padding: '2px 4px', fontSize: 12 }}
+                onClick={(e) => e.stopPropagation()}>
                 <EnvironmentOutlined />
               </button>
             </Tooltip>
           </Popover>
           <Tooltip title="重命名">
-            <button
-              style={{ background: 'transparent', border: 'none', color: '#555', cursor: 'pointer', padding: '2px 4px', fontSize: 12 }}
-              onClick={(e) => { e.stopPropagation(); onSetRenamingId(roll.id); onSetRenameName(roll.name) }}
-            >
+            <button style={{ background: 'transparent', border: 'none', color: '#555', cursor: 'pointer', padding: '2px 4px', fontSize: 12 }}
+              onClick={(e) => { e.stopPropagation(); onSetRenamingId(roll.id); onSetRenameName(roll.name) }}>
               <EditOutlined />
             </button>
           </Tooltip>
           <Tooltip title="删除卷">
-            <button
-              style={{ background: 'transparent', border: 'none', color: '#555', cursor: 'pointer', padding: '2px 4px', fontSize: 12 }}
-              onClick={(e) => { e.stopPropagation(); onContextMenu(roll, e.clientX, e.clientY) }}
+            <button style={{ background: 'transparent', border: 'none', color: '#555', cursor: 'pointer', padding: '2px 4px', fontSize: 12 }}
+              onClick={(e) => { e.stopPropagation(); onContextMenu(roll, e.clientX, e.clientY) }}>
+              <DeleteOutlined />
+            </button>
+          </Tooltip>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── 大视图横向详情行（方案 A）────────────────────────────────────────────────
+interface LargeRollRowProps {
+  roll: Roll
+  rowWidth: number
+  thumbUrl?: string
+  filmType?: AttributeType
+  filmFormatType?: AttributeType
+  selected: boolean
+  renamingId: number | null
+  renameName: string
+  onSetRenamingId: (id: number | null) => void
+  onSetRenameName: (n: string) => void
+  onRename: (id: number) => void
+  onRollClick: (roll: Roll) => void
+  onToggleSelect: (id: number) => void
+  onContextMenu: (roll: Roll, x: number, y: number) => void
+  onLocationChanged?: () => void
+}
+
+function LargeRollRow({
+  roll, rowWidth, thumbUrl, filmType, filmFormatType,
+  selected, renamingId, renameName,
+  onSetRenamingId, onSetRenameName, onRename,
+  onRollClick, onToggleSelect, onContextMenu, onLocationChanged
+}: LargeRollRowProps) {
+  const isRenaming     = renamingId === roll.id
+  const filmAttr       = roll.attributes.find((a) => a.key === 'film')
+  const filmFormatAttr = roll.attributes.find((a) => a.key === 'film_format')
+  const cameraAttr     = roll.attributes.find((a) => a.key === 'camera')
+  const lensAttr       = roll.attributes.find((a) => a.key === 'lens')
+  const [locationPopoverOpen, setLocationPopoverOpen] = useState(false)
+
+  const shotDateDisplay = roll.shot_date_min ? String(roll.shot_date_min).slice(0, 7) : null
+
+  const handleSetLocation = async (loc: Location) => {
+    const result = await window.api.rolls.photos(roll.id, { page: 1, pageSize: 9999, filters: {}, sortBy: 'shot_date', sortOrder: 'asc' }) as { rows: { id: number }[] }
+    const photoIds = result.rows.map((p) => p.id)
+    if (photoIds.length === 0) { setLocationPopoverOpen(false); return }
+    await window.api.locations.setForPhotos(photoIds, loc.id)
+    setLocationPopoverOpen(false)
+    onLocationChanged?.()
+  }
+
+  const handleClearLocation = async () => {
+    const result = await window.api.rolls.photos(roll.id, { page: 1, pageSize: 9999, filters: {}, sortBy: 'shot_date', sortOrder: 'asc' }) as { rows: { id: number }[] }
+    const photoIds = result.rows.map((p) => p.id)
+    if (photoIds.length > 0) await window.api.locations.clearForPhotos(photoIds)
+    setLocationPopoverOpen(false)
+    onLocationChanged?.()
+  }
+
+  const locationPopoverContent = (
+    <div style={{ width: 280 }} onClick={(e) => e.stopPropagation()}>
+      {roll.location_name && (
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+            <span style={{ color: '#888', fontSize: 11 }}>当前地点</span>
+            <button style={{ background: 'transparent', border: 'none', color: '#555', cursor: 'pointer', fontSize: 11, padding: 0 }} onClick={handleClearLocation}>
+              <CloseOutlined style={{ marginRight: 2 }} />清除
+            </button>
+          </div>
+          <div style={{ background: '#222', borderRadius: 4, padding: '4px 8px', color: '#ccc', fontSize: 12, display: 'flex', alignItems: 'center', gap: 4 }}>
+            <EnvironmentOutlined style={{ color: '#c8832a', fontSize: 11 }} />{roll.location_name}
+          </div>
+          <div style={{ color: '#555', fontSize: 11, marginTop: 6, marginBottom: 4 }}>更换地点</div>
+        </div>
+      )}
+      <LocationPicker onSelect={handleSetLocation} placeholder="搜索并设置地点..." />
+    </div>
+  )
+
+  // 封面占 55% 宽度，信息区占 45%
+  const coverW = Math.round(rowWidth * 0.55)
+
+  return (
+    <div
+      className="roll-card"
+      style={{
+        width: rowWidth, height: LARGE_ROW_H,
+        display: 'flex', flexDirection: 'row',
+        background: selected ? '#1e2a12' : '#1e1e1e',
+        borderRadius: 8, overflow: 'hidden',
+        border: `1px solid ${selected ? '#6aaa3a' : '#2a2a2a'}`,
+        cursor: 'pointer', transition: 'border-color 0.15s, background 0.15s'
+      }}
+      onMouseEnter={(e) => { if (!selected) (e.currentTarget as HTMLDivElement).style.borderColor = '#c8832a' }}
+      onMouseLeave={(e) => { if (!selected) (e.currentTarget as HTMLDivElement).style.borderColor = selected ? '#6aaa3a' : '#2a2a2a' }}
+      onClick={(e) => {
+        if (e.ctrlKey || e.metaKey || e.shiftKey) { onToggleSelect(roll.id); return }
+        if (!isRenaming) onRollClick(roll)
+      }}
+      onContextMenu={(e) => { e.preventDefault(); onContextMenu(roll, e.clientX, e.clientY) }}
+    >
+      {/* 左侧：封面图（55%）*/}
+      <div style={{ width: coverW, flexShrink: 0, background: '#111', overflow: 'hidden', position: 'relative' }}>
+        {thumbUrl
+          ? <img src={thumbUrl} alt={roll.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} draggable={false} />
+          : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <PictureOutlined style={{ fontSize: 48, color: '#333' }} />
+            </div>
+        }
+        {/* 张数角标 */}
+        <div style={{ position: 'absolute', bottom: 8, right: 10, background: 'rgba(0,0,0,0.65)', color: '#ccc', fontSize: 12, padding: '2px 8px', borderRadius: 10, backdropFilter: 'blur(4px)' }}>
+          {roll.photo_count} 张
+        </div>
+      </div>
+
+      {/* 右侧：信息区（45%）*/}
+      <div
+        style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '16px 16px 12px' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* 上半：卷名 + 属性 */}
+        <div>
+          {/* 卷名 */}
+          {isRenaming ? (
+            <Input autoFocus value={renameName}
+              onChange={(e) => onSetRenameName(e.target.value)}
+              onBlur={() => onRename(roll.id)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') onRename(roll.id)
+                if (e.key === 'Escape') onSetRenamingId(null)
+              }}
+              onClick={(e) => e.stopPropagation()}
+              style={{ background: '#333', borderColor: '#c8832a', color: '#ccc', width: '100%', marginBottom: 10, fontSize: 15 }}
+            />
+          ) : (
+            <div
+              style={{ color: '#e0e0e0', fontSize: 16, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 10, lineHeight: '1.3' }}
+              onClick={(e) => { e.stopPropagation(); onRollClick(roll) }}
             >
+              {roll.name}
+            </div>
+          )}
+
+          {/* 胶片 + 格式 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
+            {filmAttr && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                {filmAttr.icon_key && <FilmIconImg iconKey={filmAttr.icon_key} size={18} />}
+                <span style={{ color: '#bbb', fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 140 }}>{filmAttr.value}</span>
+              </div>
+            )}
+            {filmFormatAttr && (
+              <Tag style={{ margin: 0, fontSize: 11, padding: '0 6px', background: '#252525', borderColor: '#333', color: '#888' }}>
+                {filmFormatAttr.value}
+              </Tag>
+            )}
+          </div>
+
+          {/* 相机 + 镜头 */}
+          {(cameraAttr || lensAttr) && (
+            <div style={{ color: '#888', fontSize: 12, marginBottom: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {cameraAttr && <span>📷 {cameraAttr.value}</span>}
+              {cameraAttr && lensAttr && <span style={{ color: '#555', margin: '0 6px' }}>·</span>}
+              {lensAttr && <span>🔭 {lensAttr.value}</span>}
+            </div>
+          )}
+
+          {/* 地点 */}
+          {roll.location_name && (
+            <div style={{ color: '#777', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 4 }}>
+              <EnvironmentOutlined style={{ marginRight: 4, color: '#c8832a' }} />{roll.location_name}
+            </div>
+          )}
+
+          {/* 日期 */}
+          {shotDateDisplay && (
+            <div style={{ color: '#666', fontSize: 12 }}>{shotDateDisplay}</div>
+          )}
+        </div>
+
+        {/* 下半：操作按钮 */}
+        <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', alignItems: 'center' }}>
+          <Popover
+            content={locationPopoverContent}
+            title={<span style={{ color: '#aaa', fontSize: 12 }}>设置拍摄地点</span>}
+            trigger="click" open={locationPopoverOpen} onOpenChange={(v) => setLocationPopoverOpen(v)}
+            overlayStyle={{ zIndex: 2000 }}
+            overlayInnerStyle={{ background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 8 }}
+          >
+            <Tooltip title="设置地点">
+              <button style={{ background: 'transparent', border: 'none', color: roll.location_name ? '#c8832a' : '#555', cursor: 'pointer', padding: '3px 5px', fontSize: 13 }}
+                onClick={(e) => e.stopPropagation()}>
+                <EnvironmentOutlined />
+              </button>
+            </Tooltip>
+          </Popover>
+          <Tooltip title="重命名">
+            <button style={{ background: 'transparent', border: 'none', color: '#555', cursor: 'pointer', padding: '3px 5px', fontSize: 13 }}
+              onClick={(e) => { e.stopPropagation(); onSetRenamingId(roll.id); onSetRenameName(roll.name) }}>
+              <EditOutlined />
+            </button>
+          </Tooltip>
+          <Tooltip title="删除卷">
+            <button style={{ background: 'transparent', border: 'none', color: '#555', cursor: 'pointer', padding: '3px 5px', fontSize: 13 }}
+              onClick={(e) => { e.stopPropagation(); onContextMenu(roll, e.clientX, e.clientY) }}>
               <DeleteOutlined />
             </button>
           </Tooltip>
@@ -939,9 +1139,8 @@ function OtherPhotosSmallRow({ count, onClick }: { count: number; onClick: () =>
   )
 }
 
-// ── 其他图片卡片（中/大视图） ─────────────────────────────────────────────────
-function OtherPhotosCard({ size, cardWidth, count, onClick }: { size: 'medium' | 'large'; cardWidth: number; count: number; onClick: () => void }) {
-  const coverH = COVER_H[size]
+// ── 其他图片卡片（中视图） ─────────────────────────────────────────────────────
+function OtherPhotosCard({ cardWidth, count, onClick }: { cardWidth: number; count: number; onClick: () => void }) {
   return (
     <div
       style={{
@@ -952,13 +1151,39 @@ function OtherPhotosCard({ size, cardWidth, count, onClick }: { size: 'medium' |
       onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.borderColor = '#333' }}
       onClick={onClick}
     >
-      <div style={{ width: '100%', height: coverH, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+      <div style={{ width: '100%', height: COVER_H_MEDIUM, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
         <PictureOutlined style={{ fontSize: 36, color: '#444' }} />
         <div style={{ color: '#555', fontSize: 12 }}>未分卷照片</div>
       </div>
       <div style={{ padding: '8px 10px' }}>
         <div style={{ color: '#888', fontSize: 13, fontWeight: 500 }}>其他图片</div>
         <div style={{ color: '#555', fontSize: 11, marginTop: 2 }}>{count} 张未分卷</div>
+      </div>
+    </div>
+  )
+}
+
+// ── 其他图片横行（大视图） ─────────────────────────────────────────────────────
+function OtherPhotosLargeRow({ rowWidth, count, onClick }: { rowWidth: number; count: number; onClick: () => void }) {
+  const coverW = Math.round(rowWidth * 0.55)
+  return (
+    <div
+      style={{
+        width: rowWidth, height: LARGE_ROW_H, display: 'flex', flexDirection: 'row',
+        background: '#1a1a1a', borderRadius: 8, overflow: 'hidden',
+        border: '1px dashed #333', cursor: 'pointer', transition: 'border-color 0.15s'
+      }}
+      onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.borderColor = '#666' }}
+      onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.borderColor = '#333' }}
+      onClick={onClick}
+    >
+      <div style={{ width: coverW, flexShrink: 0, background: '#141414', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+        <PictureOutlined style={{ fontSize: 48, color: '#444' }} />
+        <div style={{ color: '#555', fontSize: 13 }}>未分卷照片</div>
+      </div>
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '16px 16px' }}>
+        <div style={{ color: '#888', fontSize: 16, fontWeight: 600, marginBottom: 8 }}>其他图片</div>
+        <div style={{ color: '#666', fontSize: 13 }}>{count} 张未分卷</div>
       </div>
     </div>
   )

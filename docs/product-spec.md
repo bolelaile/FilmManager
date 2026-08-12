@@ -1,6 +1,6 @@
 # FilmManager 产品规格文档
 
-**版本：** 1.3.3
+**版本：** 1.3.4
 **技术栈：** Electron 29 · React 18 · TypeScript 5 · Ant Design 5 · Zustand 4 · better-sqlite3 9 · Sharp 0.33 · Leaflet 1.9 · @tanstack/react-virtual 3 · electron-vite 2
 
 ---
@@ -834,11 +834,13 @@ Library.tsx 已从约 530 行的 God Component 拆分为三个自定义 hook，�
 
 **三档视图尺寸**（由 `rollThumbnailSize` 独立控制，与照片视图 `thumbnailSize` 互不影响）：
 
-| 视图 | 窗口模式 (<1400px) | 宽屏模式 (≥1400px) | 卡片高度 |
+| 视图 | 窗口模式 (<1400px) | 宽屏模式 (≥1400px) | 布局形式 |
 |---|---|---|---|
-| 小（横向列表） | 1 列 | 2 列 | 80px 行高，60×60 封面缩略图 |
-| 中（网格） | 4 列 | 6 列 | 封面 148px + 信息栏 72px |
-| 大（宽网格） | 2 列 | 3 列 | 封面 220px + 信息栏 100px（额外显示相机/镜头/拍摄年月） |
+| 小（横向列表） | 1 列 | 2 列 | 行高 80px，60×60 封面缩略图 + 右侧文字信息 |
+| 中（网格） | 4 列 | 6 列 | 封面 148px + 信息栏 72px，纵向卡片 |
+| 大（横向详情行） | 1 列 | 2 列 | 行高 220px，左侧 55% 封面图 + 右侧 45% 完整属性信息 |
+
+**大视图（`LargeRollRow`）信息区内容**：卷名（16px 加粗）、胶片图标+名称+格式 Tag、相机+镜头、地点（橙色 EnvironmentOutlined）、拍摄年月（`shot_date_min` 前 7 位）；操作按钮（地点/重命名/删除）位于信息区底部右对齐
 
 **封面**：从 `thumbCache` 异步加载，无封面时显示灰色图标；右下角照片数角标（背景模糊）
 **信息栏（中/大）**：胶片图标 + 名称（截断）+ 格式 Tag + 地点；大视图另显示相机、镜头、`shot_date_min`（年月）
@@ -919,7 +921,7 @@ Library.tsx 已从约 530 行的 God Component 拆分为三个自定义 hook，�
 三个 Tab：
 
 - **存储**：显示当前库根目录，可点击修改（`app:pickLibraryRoot` + `app:setLibraryRoot`）；显示库统计（照片总数、各格式数量、存储大小）
-- **关于**：显示版本号（`app:getVersion`）、GitHub 链接（`app:openExternal`）
+- **关于**：顶部显示应用图标、名称与版本号（`app:getVersion`）；中部为有限高（maxHeight: 220px）可滚动的版本更新历史面板，内容以 `CHANGELOG` 常量（`SettingsModal/index.tsx` 顶部定义）静态内嵌，自上而下由新到旧列出各版本号、摘要与变更条目；底部为 GitHub 仓库、Releases、Issues 三个链接卡片（`app:openExternal`）
 - **日志**：加载运行日志最近 500 行（`app:getLogContent`）；显示日志文件路径；"在文件管理器中打开"按钮
 
 ---
@@ -1025,3 +1027,5 @@ App（ConfigProvider: 深色主题 #141414，primary #c8832a）
 | **1.3.1** | **两阶段导入与存储模式**：第一阶段批量快速登记占位记录（`import_status='indexing'`）立即刷新图库骨架卡片；第二阶段后台完成 EXIF/拷贝/缩略图；存储模式新增"建立索引"（linked）选项，仅记录原始路径不复制文件；全局后台进度条（ImportProgressBar）固定显示于内容区底部；新增 `import_queue` 任务队列表；Bug 修复：linked 模式删除/移动不操作源文件；processQueueItem 错误回滚用 `copiedPath` 追踪实际已拷贝路径；对话框关闭时正确重置 storageMode |
 | **1.3.1+** | **胶片格式自动识别与卷导入增强**：① 导入时自动识别胶片格式（半格/135/645/6×6/6×7/6×12等），通过像素采样检测齿孔和120背纸边纸，优先赋值、不覆盖手动标注；② 新增半格/645/6×6/6×7/6×8/6×12等格式预设值；③ 子文件夹卷确认表格所有属性Select支持内联新增值；④ 卷模式新增拖放根目录区域，直接拖入触发扫描 |
 | **1.3.2** | **格式识别优化与胶卷分类**：① 修复 6×6 中画幅被误判为半格——比例 ≈ 1.0 先于齿孔检测提前返回；② 新增 `film_size_type` 字段，为所有内置胶卷条目分类（`'135'`/`'120'`/`'both'`），导入时按已标注胶卷类型约束格式匹配范围，135 胶卷仅在半格/135间选择，120 胶卷仅按比例区分中画幅规格；③ 统一所有 fuji→Fuji 命名，为富士品牌写入别名（fuji/富士/fujifilm/富士胶片）；④ 新增 Lucky c400 预设（both）；⑤ 修复 importRolls 未将 filmName 传入 importOptions 导致格式约束失效的问题 |
+| **1.3.3** | **相机画幅属性 + 卷视图三档尺寸 + 框选多选**：① 相机属性新增 `camera_formats`/`camera_default_format` 字段；② 新增 6x9/Xpan 格式预设及 70+ 相机预设；③ 文件夹名称复合解析（相机+时间+胶片+地点+题材）；④ 卷模式导入支持单文件夹模式及存储方式选择；⑤ 卷视图三档独立缩略图尺寸（`rollThumbnailSize`）及框选/右键多选；⑥ `rolls:batchDelete` / `rolls:batchSetAttributes` IPC；⑦ `rolls:list` 新增 `shot_date_min` 字段 |
+| **1.3.4** | **UI 规范化与卷视图大缩略图重设计**：① 大视图改为横向详情行（方案 A）——`LargeRollRow` 组件，行高 220px，左侧 55% 封面图（`objectFit:cover`），右侧 45% 展示卷名/胶片/格式/相机/镜头/地点/拍摄年月，操作按钮位于信息区底部；普通 1 列/宽屏 2 列；② 新增 `OtherPhotosLargeRow` 与大视图同形；③ `RollCard` 精简为纯中视图；④ 全项目 Modal 统一 `borderRadius=8`，footer `padding: 12px 20px`，消除按钮贴边问题 |

@@ -19,7 +19,9 @@ const api = {
     thumbDataUrl: (thumbPath: string) => ipcRenderer.invoke('photos:thumbDataUrl', thumbPath),
     moveToSubLibrary: (ids: number[], subLibId: number | null) => ipcRenderer.invoke('photos:moveToSubLibrary', ids, subLibId),
     setRotation: (id: number, rotation: number) => ipcRenderer.invoke('photos:setRotation', id, rotation),
-    batchRotate: (ids: number[], delta?: number) => ipcRenderer.invoke('photos:batchRotate', ids, delta)
+    batchRotate: (ids: number[], delta?: number) => ipcRenderer.invoke('photos:batchRotate', ids, delta),
+    toggleStar: (id: number) => ipcRenderer.invoke('photos:toggleStar', id),
+    batchStar: (ids: number[], starred: boolean) => ipcRenderer.invoke('photos:batchStar', ids, starred)
   },
   // 导入
   import: {

@@ -209,6 +209,10 @@ function runMigrations(): void {
     `)
   } catch {}
 
+  // 迁移：starred 收藏列
+  try { db.exec(`ALTER TABLE photos ADD COLUMN starred INTEGER NOT NULL DEFAULT 0`) } catch {}
+  try { db.exec(`CREATE INDEX IF NOT EXISTS idx_photos_starred ON photos(starred)`) } catch {}
+
   seedDefaultData()
   // film_size_type 分类、Fuji 名称统一、Lucky c400 新增（依赖 film 属性类型，必须在 seedDefaultData 之后）
   try { migrateFilmSizeTypes() } catch (err) {

@@ -1,6 +1,6 @@
 import React, { useEffect, useState, memo } from 'react'
 import { Tooltip } from 'antd'
-import { FileImageOutlined, CheckCircleFilled, LoadingOutlined } from '@ant-design/icons'
+import { FileImageOutlined, CheckCircleFilled, LoadingOutlined, StarFilled } from '@ant-design/icons'
 import type { Photo, AttributeType } from '../../types'
 import { FilmIconImg } from '../FilmIcon'
 
@@ -262,6 +262,29 @@ function TileCard({
             filter: 'drop-shadow(0 0 2px rgba(0,0,0,0.8))'
           }} />
         )}
+        {/* 星标角标：已收藏常亮，否则悬浮时通过 CSS hover 显示 */}
+        <button
+          className="photo-star-btn"
+          style={{
+            position: 'absolute', bottom: 4, right: 4,
+            background: 'transparent', border: 'none', padding: 0,
+            cursor: 'pointer',
+            opacity: photo.starred ? 1 : 0,
+            transition: 'opacity 0.15s'
+          }}
+          onClick={async (e) => {
+            e.stopPropagation()
+            await window.api.photos.toggleStar(photo.id)
+            // 触发父层重新加载：通过自定义事件通知
+            window.dispatchEvent(new CustomEvent('photo-star-changed', { detail: { id: photo.id } }))
+          }}
+        >
+          <StarFilled style={{
+            fontSize: 14,
+            color: photo.starred ? '#c8832a' : '#aaa',
+            filter: 'drop-shadow(0 0 2px rgba(0,0,0,0.8))'
+          }} />
+        </button>
       </div>
 
       <div style={{ padding: '4px 2px 0', height: infoBarHeight, overflow: 'hidden' }}>

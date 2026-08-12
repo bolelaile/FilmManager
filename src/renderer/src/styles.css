@@ -50,6 +50,11 @@ body {
   border-color: rgba(200, 131, 42, 0.5) !important;
 }
 
+/* 星标按钮：悬浮时显示 */
+.photo-card:hover .photo-star-btn {
+  opacity: 1 !important;
+}
+
 /* 地点搜索结果悬停 */
 .location-result-item:hover { background: #222 !important; }
 

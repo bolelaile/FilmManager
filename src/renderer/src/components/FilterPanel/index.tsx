@@ -10,7 +10,8 @@ import {
   CalendarOutlined,
   CameraOutlined,
   FileImageOutlined,
-  DeleteOutlined
+  DeleteOutlined,
+  StarFilled
 } from '@ant-design/icons'
 import type { DataNode } from 'antd/es/tree'
 import dayjs from 'dayjs'
@@ -92,6 +93,7 @@ export default function FilterPanel({ attrTypes, valueCounts, subLibCounts, filt
     + selectedFileTypes.length
     + (filter.dateFrom || filter.dateTo ? 1 : 0)
     + (filter.subLibraryId != null ? 1 : 0)
+    + (filter.starredOnly ? 1 : 0)
 
   const toggleOrganizationStatus = (status: OrganizationStatus) => {
     const next = selectedStatuses.includes(status)
@@ -246,6 +248,23 @@ export default function FilterPanel({ attrTypes, valueCounts, subLibCounts, filt
               : undefined
           }
         />
+      </div>
+
+      {/* 已收藏 */}
+      <div style={{ padding: '10px 12px', borderBottom: '1px solid #252525' }}>
+        <div
+          onClick={() => setFilter({ starredOnly: !filter.starredOnly })}
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            cursor: 'pointer', minHeight: 28
+          }}
+        >
+          <span style={{ display: 'flex', alignItems: 'center', gap: 7, color: filter.starredOnly ? '#c8832a' : '#bbb', fontSize: 12 }}>
+            <Checkbox checked={!!filter.starredOnly} style={{ pointerEvents: 'none' }} />
+            <StarFilled style={{ color: filter.starredOnly ? '#c8832a' : '#555', fontSize: 13 }} />
+            已收藏
+          </span>
+        </div>
       </div>
 
       {/* 整理状态 */}

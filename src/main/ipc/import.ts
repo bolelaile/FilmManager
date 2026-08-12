@@ -19,6 +19,7 @@ import {
 } from '../services/library-layout'
 import { getLibraryRoot, getThumbDir } from './index'
 import type { AutoOrganizeMode, ImportOptions } from '../../shared/import-types'
+import { thumbnailPool } from '../workers/worker-pool'
 
 export type { AutoOrganizeMode, ImportOptions }
 
@@ -738,10 +739,22 @@ async function processQueueItem(
       if (detectedFormat) assignFilmFormatAttribute(photoId, detectedFormat)
     }
 
+    // EXIF GPS 自动关联地点
+    if (exif.gpsLat != null && exif.gpsLng != null) {
+      autoLinkGpsLocation(db, photoId, exif.gpsLat, exif.gpsLng)
+    }
+
     db.prepare(`UPDATE import_queue SET status = 'done', done_at = datetime('now','localtime') WHERE id = ?`).run(queueId)
 
-    // 缩略图后台生成（不阻塞进度）
-    generateThumbnail(finalPath, thumbDir).then((thumbPath) => {
+    // 缩略图通过 Worker Pool 异步生成（不阻塞进度推送）
+    const thumbDir = getThumbDir()
+    thumbnailPool.generate(finalPath, thumbDir).then((thumbPath) => {
+      if (!thumbPath) {
+        // pool 不可用时回退到主进程内联生成
+        return generateThumbnail(finalPath, thumbDir)
+      }
+      return thumbPath
+    }).then((thumbPath) => {
       if (thumbPath) db.prepare('UPDATE photos SET thumb_path = ?, thumb_ready = 1 WHERE id = ?').run(thumbPath, photoId)
     })
   } catch (err) {
@@ -823,6 +836,11 @@ async function importFile(sourcePath: string, options: ImportOptions): Promise<n
       if (detectedFormat) assignFilmFormatAttribute(photoId, detectedFormat)
     }
 
+    // EXIF GPS 自动关联地点
+    if (exif.gpsLat != null && exif.gpsLng != null) {
+      autoLinkGpsLocation(db, photoId, exif.gpsLat, exif.gpsLng)
+    }
+
     // 后台生成缩略图
     generateThumbnail(finalDest, thumbDir).then((thumbPath) => {
       if (thumbPath) {
@@ -840,6 +858,43 @@ async function importFile(sourcePath: string, options: ImportOptions): Promise<n
     }
     log.error('Import file failed', sourcePath, err)
     return null
+  }
+}
+
+/**
+ * 将照片与最近的已有地点关联，或自动创建新地点（坐标精确到小数点后3位作为名称）。
+ * 若100米范围内已有地点则直接关联，否则新建一个坐标地点。
+ */
+function autoLinkGpsLocation(db: ReturnType<typeof getDb>, photoId: number, lat: number, lng: number): void {
+  try {
+    // 计算与所有现有地点的近似距离（经纬度差转米，误差可接受）
+    const locations = db.prepare('SELECT id, lat, lng FROM locations').all() as { id: number; lat: number; lng: number }[]
+    const THRESHOLD_M = 100
+    let bestId: number | null = null
+    let bestDist = Infinity
+    for (const loc of locations) {
+      const dlat = (loc.lat - lat) * 111320
+      const dlng = (loc.lng - lng) * 111320 * Math.cos(lat * Math.PI / 180)
+      const dist = Math.sqrt(dlat * dlat + dlng * dlng)
+      if (dist < bestDist) { bestDist = dist; bestId = loc.id }
+    }
+
+    let locationId: number
+    if (bestId != null && bestDist <= THRESHOLD_M) {
+      locationId = bestId
+    } else {
+      // 新建坐标地点，名称为 "GPS (lat, lng)"
+      const name = `GPS (${lat.toFixed(4)}, ${lng.toFixed(4)})`
+      const address = `${lat.toFixed(6)}, ${lng.toFixed(6)}`
+      const result = db.prepare(
+        'INSERT INTO locations (name, address, lat, lng) VALUES (?, ?, ?, ?)'
+      ).run(name, address, lat, lng)
+      locationId = result.lastInsertRowid as number
+    }
+
+    db.prepare('INSERT OR IGNORE INTO photo_locations (photo_id, location_id) VALUES (?, ?)').run(photoId, locationId)
+  } catch (err) {
+    log.warn('autoLinkGpsLocation failed', err)
   }
 }
 

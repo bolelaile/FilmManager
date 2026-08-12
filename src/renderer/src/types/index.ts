@@ -15,6 +15,7 @@ export interface Photo {
   notes: string
   storage_mode: 'managed' | 'linked'
   import_status: 'indexing' | 'ready' | 'error'
+  starred: number
   attributes: PhotoAttribute[]
 }
 
@@ -155,4 +156,5 @@ export interface FilterState {
   organizationStatuses?: OrganizationStatus[]
   sortBy: 'imported_at' | 'shot_date' | 'file_name'
   sortOrder: 'asc' | 'desc'
+  starredOnly?: boolean
 }

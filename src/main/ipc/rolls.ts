@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron'
+import fs from 'fs'
 import { getDb } from '../db/index'
 import log from 'electron-log'
 
@@ -86,7 +87,8 @@ export function registerRollsIpc(): void {
 
     let sql = `
       SELECT r.*, COUNT(DISTINCT pr.photo_id) as photo_count,
-             cover.thumb_path, cover.thumb_ready
+             cover.thumb_path, cover.thumb_ready,
+             MIN(member.shot_date) as shot_date_min
       FROM rolls r
       LEFT JOIN photo_rolls pr ON pr.roll_id = r.id
       LEFT JOIN photos member ON member.id = pr.photo_id
@@ -283,10 +285,90 @@ export function registerRollsIpc(): void {
     return true
   })
 
-  // 删除卷（仅删除卷记录，不删除照片）
-  ipcMain.handle('rolls:delete', (_, id: number) => {
+  // 删除卷（可选同时删除照片/物理文件）
+  ipcMain.handle('rolls:delete', (_, id: number, deletePhotos?: boolean, deleteFiles?: boolean) => {
     const db = getDb()
-    db.prepare('DELETE FROM rolls WHERE id = ?').run(id)
+    if (deletePhotos) {
+      const photoRows = db.prepare(`
+        SELECT p.id, p.file_path, p.thumb_path, p.storage_mode FROM photos p
+        JOIN photo_rolls pr ON pr.photo_id = p.id WHERE pr.roll_id = ?
+      `).all(id) as { id: number; file_path: string; thumb_path?: string; storage_mode?: string }[]
+
+      db.transaction(() => {
+        for (const p of photoRows) db.prepare('DELETE FROM photos WHERE id = ?').run(p.id)
+        db.prepare('DELETE FROM rolls WHERE id = ?').run(id)
+      })()
+
+      if (deleteFiles) {
+        for (const p of photoRows) {
+          if (p.storage_mode === 'linked') continue // cannot delete files outside library
+          try { fs.unlinkSync(p.file_path) } catch {}
+          if (p.thumb_path) try { fs.unlinkSync(p.thumb_path) } catch {}
+        }
+      }
+    } else {
+      db.prepare('DELETE FROM rolls WHERE id = ?').run(id)
+    }
+    return true
+  })
+
+  // 批量删除卷
+  ipcMain.handle('rolls:batchDelete', (_, ids: number[], deletePhotos?: boolean, deleteFiles?: boolean) => {
+    if (!ids || ids.length === 0) return true
+    const db = getDb()
+    const ph = ids.map(() => '?').join(',')
+
+    if (deletePhotos) {
+      const photoRows = db.prepare(`
+        SELECT p.id, p.file_path, p.thumb_path, p.storage_mode FROM photos p
+        JOIN photo_rolls pr ON pr.photo_id = p.id WHERE pr.roll_id IN (${ph})
+      `).all(...ids) as { id: number; file_path: string; thumb_path?: string; storage_mode?: string }[]
+
+      db.transaction(() => {
+        for (const p of photoRows) db.prepare('DELETE FROM photos WHERE id = ?').run(p.id)
+        db.prepare(`DELETE FROM rolls WHERE id IN (${ph})`).run(...ids)
+      })()
+
+      if (deleteFiles) {
+        for (const p of photoRows) {
+          if (p.storage_mode === 'linked') continue
+          try { fs.unlinkSync(p.file_path) } catch {}
+          if (p.thumb_path) try { fs.unlinkSync(p.thumb_path) } catch {}
+        }
+      }
+    } else {
+      db.prepare(`DELETE FROM rolls WHERE id IN (${ph})`).run(...ids)
+    }
+    log.info(`Batch deleted ${ids.length} rolls, deletePhotos=${deletePhotos}, deleteFiles=${deleteFiles}`)
+    return true
+  })
+
+  // 批量设置卷内照片的属性
+  ipcMain.handle('rolls:batchSetAttributes', (_, rollIds: number[], attrs: { typeId: number; valueId: number }[]) => {
+    if (!rollIds || rollIds.length === 0) return true
+    if (!attrs || attrs.length === 0) return true
+    const db = getDb()
+    const ph = rollIds.map(() => '?').join(',')
+
+    const photoIds = (db.prepare(`
+      SELECT DISTINCT photo_id FROM photo_rolls WHERE roll_id IN (${ph})
+    `).all(...rollIds) as { photo_id: number }[]).map((r) => r.photo_id)
+
+    if (photoIds.length === 0) return true
+
+    const delStmt = db.prepare('DELETE FROM photo_attributes WHERE photo_id = ? AND attribute_type_id = ?')
+    const insStmt = db.prepare(
+      'INSERT OR IGNORE INTO photo_attributes (photo_id, attribute_type_id, attribute_value_id) VALUES (?, ?, ?)'
+    )
+    db.transaction(() => {
+      for (const pid of photoIds) {
+        for (const { typeId, valueId } of attrs) {
+          delStmt.run(pid, typeId)
+          insStmt.run(pid, typeId, valueId)
+        }
+      }
+    })()
+    log.info(`Batch set attributes for ${photoIds.length} photos across ${rollIds.length} rolls`)
     return true
   })
 

@@ -9,7 +9,8 @@ import {
   getExifData,
   SUPPORTED_EXTENSIONS,
   getFileType,
-  computeContentHash
+  computeContentHash,
+  detectFilmFormat
 } from '../services/thumbnail'
 import {
   ensureSubLibraryDirectory,
@@ -48,6 +49,9 @@ export interface FolderScanResult {
   parentMatches: AttrMatch[] // best-match from parent folder name (may overlap)
   parsedDate: string | null  // YYYY-MM-DD extracted from folder name, if any
   inferredRollName: string   // pre-computed suggested roll name
+  parsedLocationId: number | null
+  parsedLocationName: string | null
+  parsedSubject: string | null
 }
 
 export interface RollImportConfig {
@@ -58,6 +62,7 @@ export interface RollImportConfig {
   shotDate?: string | null
   subLibraryId?: number | null
   createRoll: boolean // false → just import photos without creating a roll
+  storageMode?: 'managed' | 'linked'
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -190,6 +195,150 @@ function buildRollName(
   return parts.join(' · ')
 }
 
+interface LocationRow {
+  id: number
+  name: string
+  address: string
+}
+
+/**
+ * Try to match a location name from the DB inside a folder name string.
+ * Returns the best (longest-name) match, or null.
+ */
+function matchLocationFromName(
+  folderName: string,
+  locations: LocationRow[]
+): { id: number; name: string } | null {
+  const norm = normalize(folderName)
+  // Sort by name length descending to prefer longer/more-specific matches
+  const sorted = [...locations].sort((a, b) => b.name.length - a.name.length)
+  for (const loc of sorted) {
+    const normLoc = normalize(loc.name)
+    if (normLoc.length < 2) continue
+    if (norm.includes(normLoc)) return { id: loc.id, name: loc.name }
+  }
+  // Also try address-level match (first segment before comma)
+  for (const loc of sorted) {
+    const firstSeg = normalize(loc.address.split(',')[0] ?? loc.address)
+    if (firstSeg.length >= 2 && norm.includes(firstSeg)) return { id: loc.id, name: loc.name }
+  }
+  return null
+}
+
+/**
+ * Extract a subject/theme token from the folder name after removing date patterns,
+ * matched attribute tokens, and matched location tokens.
+ * Returns null when there's nothing meaningful left.
+ */
+function extractSubject(
+  folderName: string,
+  attrMatches: AttrMatch[],
+  locationMatch: { id: number; name: string } | null
+): string | null {
+  // Remove date-like segments
+  let residual = folderName
+    .replace(/\b20\d{2}[-_./]?(0[1-9]|1[0-2])([-_./]?(0[1-9]|[12]\d|3[01]))?\b/g, '')
+    .replace(/\b[2-9]\d(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\b/g, '')
+    .replace(/\b[2-9]\d(0[1-9]|1[0-2])\b/g, '')
+
+  // Remove attribute value tokens (use normalized form to strip)
+  for (const m of attrMatches) {
+    // Remove by value and alias
+    const target = m.matchedAlias ?? m.value
+    const regex = new RegExp(target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')
+    residual = residual.replace(regex, '')
+    // Also try removing by normalized value
+    residual = residual.replace(new RegExp(m.value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), '')
+  }
+
+  // Remove location token
+  if (locationMatch) {
+    const locRegex = new RegExp(locationMatch.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')
+    residual = residual.replace(locRegex, '')
+  }
+
+  // Strip separators and whitespace
+  residual = residual.replace(/[\s\-_.[\]()\[\]]+/g, ' ').trim()
+
+  // Ignore very short or purely numeric residuals
+  if (!residual || residual.length < 2 || /^\d+$/.test(residual)) return null
+  return residual
+}
+
+function doScanFolders(rootPath: string): {
+  rootPath: string
+  folders: FolderScanResult[]
+  rootFileCount: number
+  rootMatches: AttrMatch[]
+} {
+  const db = getDb()
+  const matchableKeys = ['film', 'film_format', 'camera', 'lens']
+  const allValues = db.prepare(`
+    SELECT av.id, av.attribute_type_id, av.value, av.icon_key, at.key
+    FROM attribute_values av
+    JOIN attribute_types at ON at.id = av.attribute_type_id
+    WHERE at.key IN (${matchableKeys.map(() => '?').join(',')})
+    ORDER BY LENGTH(av.value) DESC
+  `).all(...matchableKeys) as { id: number; attribute_type_id: number; value: string; key: string; icon_key?: string | null }[]
+
+  const allAliases = db.prepare(`
+    SELECT ava.alias, ava.value_id, av.attribute_type_id, av.icon_key, at.key as type_key
+    FROM attribute_value_aliases ava
+    JOIN attribute_values av ON av.id = ava.value_id
+    JOIN attribute_types at ON at.id = av.attribute_type_id
+    WHERE at.key IN (${matchableKeys.map(() => '?').join(',')})
+    ORDER BY LENGTH(ava.alias) DESC
+  `).all(...matchableKeys) as AliasRow[]
+
+  const locations = db.prepare('SELECT id, name, address FROM locations ORDER BY LENGTH(name) DESC').all() as LocationRow[]
+
+  let entries: fs.Dirent[]
+  try {
+    entries = fs.readdirSync(rootPath, { withFileTypes: true })
+  } catch {
+    return { rootPath, folders: [], rootFileCount: 0, rootMatches: [] }
+  }
+
+  const rootName = path.basename(rootPath)
+  const rootMatches = matchFolderName(rootName, allValues, allAliases)
+
+  const folders: FolderScanResult[] = []
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    const folderPath = path.join(rootPath, entry.name)
+    const files = walk(folderPath)
+    if (files.length === 0) continue
+
+    const childMatches = matchFolderName(entry.name, allValues, allAliases)
+    const parsedDate = parseDateFromName(entry.name) ?? parseDateFromName(rootName)
+    const mergedMatches = mergeMatches(childMatches, rootMatches)
+    const inferredRollName = buildRollName(entry.name, mergedMatches, parsedDate)
+    const locationMatch = matchLocationFromName(entry.name, locations)
+    const subject = extractSubject(entry.name, mergedMatches, locationMatch)
+
+    folders.push({
+      name: entry.name,
+      folderPath,
+      fileCount: files.length,
+      matches: childMatches,
+      parentMatches: rootMatches,
+      parsedDate,
+      inferredRollName,
+      parsedLocationId: locationMatch?.id ?? null,
+      parsedLocationName: locationMatch?.name ?? null,
+      parsedSubject: subject
+    })
+  }
+
+  const rootFiles = fs.readdirSync(rootPath, { withFileTypes: true })
+    .filter((e) => !e.isDirectory())
+    .map((e) => path.join(rootPath, e.name))
+    .filter((f) => SUPPORTED_EXTENSIONS.has(path.extname(f).toLowerCase()))
+
+  return { rootPath, folders, rootFileCount: rootFiles.length, rootMatches }
+}
+
 export function registerImportIpc(): void {
   // ── 1. 打开文件夹选择对话框并导入（旧有，单批次） ──────────────────────────
   ipcMain.handle('import:selectAndImport', async (event, options: ImportOptions = {}) => {
@@ -222,18 +371,37 @@ export function registerImportIpc(): void {
   })
 
   // ── 3. 扫描文件夹：枚举子文件夹，匹配属性 ────────────────────────────────
-  ipcMain.handle('import:scanFolders', async (event) => {
-    const win = BrowserWindow.fromWebContents(event.sender)
-    const result = await dialog.showOpenDialog(win!, {
-      properties: ['openDirectory'],
-      title: '选择包含子文件夹（每个子文件夹为一卷）的根目录'
-    })
-    if (result.canceled || !result.filePaths[0]) return null
+  ipcMain.handle('import:scanFolders', async (event, providedPath?: string) => {
+    let rootPath: string
+    if (providedPath) {
+      rootPath = providedPath
+    } else {
+      const win = BrowserWindow.fromWebContents(event.sender)
+      const result = await dialog.showOpenDialog(win!, {
+        properties: ['openDirectory'],
+        title: '选择包含子文件夹（每个子文件夹为一卷）的根目录'
+      })
+      if (result.canceled || !result.filePaths[0]) return null
+      rootPath = result.filePaths[0]
+    }
+    return doScanFolders(rootPath)
+  })
 
-    const rootPath = result.filePaths[0]
+  // ── 3b. 扫描单文件夹为一卷 ────────────────────────────────────────────────
+  ipcMain.handle('import:scanSingleFolder', async (event, providedPath?: string) => {
+    let folderPath: string
+    if (providedPath) {
+      folderPath = providedPath
+    } else {
+      const win = BrowserWindow.fromWebContents(event.sender)
+      const result = await dialog.showOpenDialog(win!, {
+        properties: ['openDirectory'],
+        title: '选择要作为一卷导入的文件夹'
+      })
+      if (result.canceled || !result.filePaths[0]) return null
+      folderPath = result.filePaths[0]
+    }
     const db = getDb()
-
-    // Load all matchable attribute values (film, film_format, camera, lens)
     const matchableKeys = ['film', 'film_format', 'camera', 'lens']
     const allValues = db.prepare(`
       SELECT av.id, av.attribute_type_id, av.value, av.icon_key, at.key
@@ -242,8 +410,6 @@ export function registerImportIpc(): void {
       WHERE at.key IN (${matchableKeys.map(() => '?').join(',')})
       ORDER BY LENGTH(av.value) DESC
     `).all(...matchableKeys) as { id: number; attribute_type_id: number; value: string; key: string; icon_key?: string | null }[]
-
-    // Load aliases for all matchable values
     const allAliases = db.prepare(`
       SELECT ava.alias, ava.value_id, av.attribute_type_id, av.icon_key, at.key as type_key
       FROM attribute_value_aliases ava
@@ -252,62 +418,28 @@ export function registerImportIpc(): void {
       WHERE at.key IN (${matchableKeys.map(() => '?').join(',')})
       ORDER BY LENGTH(ava.alias) DESC
     `).all(...matchableKeys) as AliasRow[]
+    const locations = db.prepare('SELECT id, name, address FROM locations ORDER BY LENGTH(name) DESC').all() as LocationRow[]
 
-    // Enumerate immediate subdirectories
-    let entries: fs.Dirent[]
-    try {
-      entries = fs.readdirSync(rootPath, { withFileTypes: true })
-    } catch {
-      return { rootPath, folders: [] }
+    const folderName = path.basename(folderPath)
+    const files = walk(folderPath)
+    const matches = matchFolderName(folderName, allValues, allAliases)
+    const parsedDate = parseDateFromName(folderName)
+    const locationMatch = matchLocationFromName(folderName, locations)
+    const subject = extractSubject(folderName, matches, locationMatch)
+    const inferredRollName = buildRollName(folderName, matches, parsedDate)
+    const scanResult: FolderScanResult = {
+      name: folderName,
+      folderPath,
+      fileCount: files.length,
+      matches,
+      parentMatches: [],
+      parsedDate,
+      inferredRollName,
+      parsedLocationId: locationMatch?.id ?? null,
+      parsedLocationName: locationMatch?.name ?? null,
+      parsedSubject: subject
     }
-
-    // ── Determine parent-folder role ──────────────────────────────────────
-    const rootName = path.basename(rootPath)
-    const rootMatches = matchFolderName(rootName, allValues, allAliases)
-
-    const folders: FolderScanResult[] = []
-
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue
-      const folderPath = path.join(rootPath, entry.name)
-      const files = walk(folderPath)
-      if (files.length === 0) continue
-
-      // Match child folder name (primary + alias)
-      const childMatches = matchFolderName(entry.name, allValues, allAliases)
-
-      // Parse date from child name (fallback to root name)
-      const parsedDate = parseDateFromName(entry.name) ?? parseDateFromName(rootName)
-
-      // Merge: child takes priority, parent fills gaps
-      // Exception: if parent provides the same type as child, child wins.
-      const mergedMatches = mergeMatches(childMatches, rootMatches)
-
-      const inferredRollName = buildRollName(entry.name, mergedMatches, parsedDate)
-
-      folders.push({
-        name: entry.name,
-        folderPath,
-        fileCount: files.length,
-        matches: childMatches,
-        parentMatches: rootMatches,
-        parsedDate,
-        inferredRollName
-      })
-    }
-
-    // Also count loose files in the root (no subfolder) as a potential "other" batch
-    const rootFiles = fs.readdirSync(rootPath, { withFileTypes: true })
-      .filter((e) => !e.isDirectory())
-      .map((e) => path.join(rootPath, e.name))
-      .filter((f) => SUPPORTED_EXTENSIONS.has(path.extname(f).toLowerCase()))
-
-    return {
-      rootPath,
-      folders,
-      rootFileCount: rootFiles.length,
-      rootMatches  // send to frontend so it can show the parent-level hint
-    }
+    return { folderPath, folder: scanResult }
   })
 
   // ── 4. 按卷批量导入（用户确认后） ────────────────────────────────────────
@@ -342,7 +474,9 @@ export function registerImportIpc(): void {
         subLibraryId: cfg.subLibraryId ?? undefined,
         shotDate: cfg.shotDate ?? null,
         cameraName: configuredAttrs.find((attr) => attr.key === 'camera')?.value ?? null,
-        lensName: configuredAttrs.find((attr) => attr.key === 'lens')?.value ?? null
+        lensName: configuredAttrs.find((attr) => attr.key === 'lens')?.value ?? null,
+        filmName: configuredAttrs.find((attr) => attr.key === 'film')?.value ?? null,
+        storageMode: cfg.storageMode ?? 'managed'
       }
 
       for (const filePath of files) {
@@ -597,6 +731,12 @@ async function processQueueItem(
     const autoCreateEquipment = options.autoCreateEquipment !== false
     assignEquipmentAttribute(photoId, 'camera', options.cameraName ?? exif.cameraModel, autoCreateEquipment)
     assignEquipmentAttribute(photoId, 'lens', options.lensName ?? exif.lensModel, autoCreateEquipment)
+    if (meta) {
+      const filmSizeType = getPhotoFilmSizeType(photoId, options.filmName)
+      const cameraInfo = getPhotoCameraFormatInfo(photoId, options.cameraName ?? exif.cameraModel)
+      const detectedFormat = await resolveFilmFormat(sourcePath, meta.width, meta.height, filmSizeType, cameraInfo)
+      if (detectedFormat) assignFilmFormatAttribute(photoId, detectedFormat)
+    }
 
     db.prepare(`UPDATE import_queue SET status = 'done', done_at = datetime('now','localtime') WHERE id = ?`).run(queueId)
 
@@ -622,6 +762,7 @@ async function importFile(sourcePath: string, options: ImportOptions): Promise<n
   const libraryRoot = getLibraryRoot()
   const filesRoot = path.join(libraryRoot, 'files')
   const thumbDir = getThumbDir()
+  const storageMode = options.storageMode ?? 'managed'
   let copiedPath: string | null = null
 
   try {
@@ -635,23 +776,27 @@ async function importFile(sourcePath: string, options: ImportOptions): Promise<n
     const meta = await getImageMeta(sourcePath)
     const exif = await getExifData(sourcePath)
     const effectiveShotDate = options.shotDate ?? exif.shotDate
-    const targetSubLibraryId = resolveTargetSubLibrary(
-      options,
-      sourcePath,
-      effectiveShotDate,
-      exif.cameraModel,
-      filesRoot
-    )
-    const targetDirectory = ensureSubLibraryDirectory(db, filesRoot, targetSubLibraryId)
-    const finalDest = ensureUniqueFilePath(path.join(targetDirectory, path.basename(sourcePath)))
-    fs.copyFileSync(sourcePath, finalDest)
-    copiedPath = finalDest
+
+    let finalDest: string
+    let targetSubLibraryId: number | undefined | null
+
+    if (storageMode === 'linked') {
+      finalDest = sourcePath
+      targetSubLibraryId = options.subLibraryId ?? null
+    } else {
+      targetSubLibraryId = resolveTargetSubLibrary(options, sourcePath, effectiveShotDate, exif.cameraModel, filesRoot)
+      const targetDirectory = ensureSubLibraryDirectory(db, filesRoot, targetSubLibraryId)
+      finalDest = ensureUniqueFilePath(path.join(targetDirectory, path.basename(sourcePath)))
+      fs.copyFileSync(sourcePath, finalDest)
+      copiedPath = finalDest
+    }
+
     const stat = fs.statSync(finalDest)
 
     const info = db
       .prepare(
         `INSERT INTO photos (file_path, original_name, file_type, width, height, file_size, sub_library_id, shot_date, content_hash, storage_mode, import_status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'managed', 'ready')`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready')`
       )
       .run(
         finalDest,
@@ -662,7 +807,8 @@ async function importFile(sourcePath: string, options: ImportOptions): Promise<n
         stat.size,
         targetSubLibraryId ?? null,
         effectiveShotDate ?? null,
-        contentHash ?? null
+        contentHash ?? null,
+        storageMode
       )
 
     const photoId = info.lastInsertRowid as number
@@ -670,6 +816,12 @@ async function importFile(sourcePath: string, options: ImportOptions): Promise<n
     const autoCreateEquipment = options.autoCreateEquipment !== false
     assignEquipmentAttribute(photoId, 'camera', options.cameraName ?? exif.cameraModel, autoCreateEquipment)
     assignEquipmentAttribute(photoId, 'lens', options.lensName ?? exif.lensModel, autoCreateEquipment)
+    if (meta) {
+      const filmSizeType = getPhotoFilmSizeType(photoId, options.filmName)
+      const cameraInfo = getPhotoCameraFormatInfo(photoId, options.cameraName ?? exif.cameraModel)
+      const detectedFormat = await resolveFilmFormat(sourcePath, meta.width, meta.height, filmSizeType, cameraInfo)
+      if (detectedFormat) assignFilmFormatAttribute(photoId, detectedFormat)
+    }
 
     // 后台生成缩略图
     generateThumbnail(finalDest, thumbDir).then((thumbPath) => {
@@ -799,4 +951,182 @@ function resolveTargetSubLibrary(
 
 function sanitizeSubLibraryName(name: string): string {
   return name.replace(/[\u0000-\u001f]/g, '').trim().slice(0, 100) || '未命名'
+}
+
+/**
+ * 查找照片已分配的胶卷属性值的 film_size_type（'135'|'120'|'both'|null）。
+ * 若 options 中提供了 filmName，优先按名称从 DB 中找；否则按 photo_attributes 中已存在的记录查。
+ */
+function getPhotoFilmSizeType(photoId: number, filmName?: string | null): '135' | '120' | 'both' | null {
+  try {
+    const db = getDb()
+    const filmAttrType = db.prepare("SELECT id FROM attribute_types WHERE key = 'film'").get() as { id: number } | undefined
+    if (!filmAttrType) return null
+
+    let sizeType: string | null = null
+
+    if (filmName) {
+      // 按名称直接查
+      const row = db.prepare(
+        `SELECT film_size_type FROM attribute_values WHERE attribute_type_id = ? AND LOWER(value) = LOWER(?)`
+      ).get(filmAttrType.id, filmName) as { film_size_type: string | null } | undefined
+      sizeType = row?.film_size_type ?? null
+    }
+
+    if (!sizeType) {
+      // 按已关联的 photo_attributes 查
+      const row = db.prepare(`
+        SELECT av.film_size_type FROM photo_attributes pa
+        JOIN attribute_values av ON av.id = pa.attribute_value_id
+        WHERE pa.photo_id = ? AND pa.attribute_type_id = ?
+        LIMIT 1
+      `).get(photoId, filmAttrType.id) as { film_size_type: string | null } | undefined
+      sizeType = row?.film_size_type ?? null
+    }
+
+    if (sizeType === '135' || sizeType === '120' || sizeType === 'both') return sizeType
+    return null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 相机画幅令牌 → film_format 属性值映射
+ */
+const CAMERA_FORMAT_TOKEN_MAP: Record<string, string> = {
+  '135':  '135 / 35mm',
+  '半格': '半格 / 17.5mm',
+  '645':  '645 中画幅',
+  '6x6':  '6x6 中画幅',
+  '6x7':  '6x7 中画幅',
+  '6x8':  '6x8 中画幅',
+  '6x9':  '6x9 中画幅',
+  '6x12': '6x12 中画幅',
+  'xpan': '135 宽幅 / Xpan',
+  '4x5':  '4x5 大画幅',
+  '8x10': '8x10 大画幅',
+}
+
+/**
+ * 查找相机画幅信息。
+ * 返回 { formats: string[](film_format值列表), defaultFormat: string | null } 或 null（未知相机）。
+ */
+function getPhotoCameraFormatInfo(
+  photoId: number,
+  cameraName?: string | null
+): { formats: string[]; defaultFormat: string | null } | null {
+  try {
+    const db = getDb()
+    const camAttrType = db.prepare("SELECT id FROM attribute_types WHERE key = 'camera'").get() as { id: number } | undefined
+    if (!camAttrType) return null
+
+    let row: { camera_formats: string | null; camera_default_format: string | null } | undefined
+
+    if (cameraName) {
+      row = db.prepare(
+        `SELECT camera_formats, camera_default_format FROM attribute_values
+         WHERE attribute_type_id = ? AND LOWER(value) = LOWER(?)`
+      ).get(camAttrType.id, cameraName) as typeof row
+    }
+
+    if (!row) {
+      row = db.prepare(`
+        SELECT av.camera_formats, av.camera_default_format FROM photo_attributes pa
+        JOIN attribute_values av ON av.id = pa.attribute_value_id
+        WHERE pa.photo_id = ? AND pa.attribute_type_id = ?
+        LIMIT 1
+      `).get(photoId, camAttrType.id) as typeof row
+    }
+
+    if (!row?.camera_formats) return null
+
+    const tokens = row.camera_formats.split(',').map(t => t.trim()).filter(Boolean)
+    const formats = tokens.map(t => CAMERA_FORMAT_TOKEN_MAP[t]).filter(Boolean)
+    const defaultFormat = row.camera_default_format
+      ? (CAMERA_FORMAT_TOKEN_MAP[row.camera_default_format] ?? null)
+      : null
+
+    return formats.length > 0 ? { formats, defaultFormat } : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 综合相机画幅信息和胶卷类型约束，确定最终胶片格式。
+ * - 相机只有一种画幅：直接返回，无需像素分析
+ * - 相机有多种画幅：取与 filmSizeType 相交后调用 detectFilmFormat
+ * - 无相机信息：仅用 filmSizeType 约束调用 detectFilmFormat
+ */
+async function resolveFilmFormat(
+  filePath: string,
+  width: number,
+  height: number,
+  filmSizeType: '135' | '120' | 'both' | null,
+  cameraInfo: { formats: string[]; defaultFormat: string | null } | null
+): Promise<string | null> {
+  if (cameraInfo) {
+    if (cameraInfo.formats.length === 1) {
+      // 单画幅相机：不需要像素分析
+      return cameraInfo.formats[0]
+    }
+    // 多画幅相机：filmSizeType 与 cameraInfo.formats 取交集
+    if (filmSizeType && filmSizeType !== 'both') {
+      // 把 filmSizeType 转换为对应的 film_format 值集合
+      let filmFormatSet: Set<string>
+      if (filmSizeType === '135') {
+        filmFormatSet = new Set(['135 / 35mm', '半格 / 17.5mm', '135 宽幅 / Xpan'])
+      } else {
+        // '120'
+        filmFormatSet = new Set(['645 中画幅', '6x6 中画幅', '6x7 中画幅', '6x8 中画幅', '6x9 中画幅', '6x12 中画幅', '120 中画幅'])
+      }
+      const intersection = cameraInfo.formats.filter(f => filmFormatSet.has(f))
+      if (intersection.length === 1) return intersection[0]
+      if (intersection.length === 0) {
+        // 无交集（数据矛盾）：降级到默认画幅
+        return cameraInfo.defaultFormat
+      }
+      // 还有多个候选：继续像素分析（传 filmSizeType）
+    }
+    // 多画幅且无法缩减：使用像素分析
+  }
+  return detectFilmFormat(filePath, width, height, filmSizeType)
+}
+
+function assignFilmFormatAttribute(photoId: number, formatValue: string): void {
+  try {
+    const db = getDb()
+    const attrType = db.prepare("SELECT id FROM attribute_types WHERE key = 'film_format'").get() as { id: number } | undefined
+    if (!attrType) return
+
+    // 照片已有该属性则跳过
+    const existing = db.prepare(
+      'SELECT 1 FROM photo_attributes WHERE photo_id = ? AND attribute_type_id = ?'
+    ).get(photoId, attrType.id)
+    if (existing) return
+
+    // 查找或创建对应的 attribute_value
+    let val = db.prepare(
+      'SELECT id FROM attribute_values WHERE attribute_type_id = ? AND value = ?'
+    ).get(attrType.id, formatValue) as { id: number } | undefined
+
+    if (!val) {
+      // 自动检测到的格式值如果不在预设里，就创建一个非预设条目
+      db.prepare(
+        'INSERT OR IGNORE INTO attribute_values (attribute_type_id, value, is_preset) VALUES (?, ?, 0)'
+      ).run(attrType.id, formatValue)
+      val = db.prepare(
+        'SELECT id FROM attribute_values WHERE attribute_type_id = ? AND value = ?'
+      ).get(attrType.id, formatValue) as { id: number } | undefined
+    }
+
+    if (val) {
+      db.prepare(
+        'INSERT OR IGNORE INTO photo_attributes (photo_id, attribute_type_id, attribute_value_id) VALUES (?, ?, ?)'
+      ).run(photoId, attrType.id, val.id)
+    }
+  } catch (err) {
+    log.warn('assignFilmFormatAttribute failed', err)
+  }
 }

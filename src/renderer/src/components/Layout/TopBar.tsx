@@ -36,7 +36,7 @@ export default function TopBar({
   onOpenMap, onOpenFilmLibrary, onOpenCameraLibrary, onOpenLensLibrary,
   onCreateRoll, totalCount
 }: TopBarProps) {
-  const { filter, setFilter, thumbnailSize, setThumbnailSize, selectedIds, setSettingsOpen, viewMode, setViewMode, activeRoll, setActiveRoll } = useStore()
+  const { filter, setFilter, thumbnailSize, setThumbnailSize, rollThumbnailSize, setRollThumbnailSize, selectedIds, setSettingsOpen, viewMode, setViewMode, activeRoll, setActiveRoll } = useStore()
 
   const handleSearchChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -44,6 +44,11 @@ export default function TopBar({
     },
     [setFilter]
   )
+
+  // 卷视图（含卷内单独照片页）时用 rollThumbnailSize，其余用 thumbnailSize
+  const isRollView = viewMode === 'rolls' || (viewMode === 'photos' && !!activeRoll)
+  const activeSize = isRollView ? rollThumbnailSize : thumbnailSize
+  const setActiveSize = isRollView ? setRollThumbnailSize : setThumbnailSize
 
   const sizeOptions = [
     {
@@ -190,8 +195,8 @@ export default function TopBar({
 
         <Segmented
           options={sizeOptions}
-          value={thumbnailSize}
-          onChange={(v) => setThumbnailSize(v as 'small' | 'medium' | 'large')}
+          value={activeSize}
+          onChange={(v) => setActiveSize(v as 'small' | 'medium' | 'large')}
           style={{ background: '#262626' }}
         />
 

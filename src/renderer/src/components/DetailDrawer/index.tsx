@@ -431,11 +431,13 @@ export default function DetailDrawer({ photoId, attrTypes, onClose, onDeleted, o
                 从库中移除
               </Button>
             </Popconfirm>
-            <Popconfirm title="永久删除文件？" description="此操作不可恢复" onConfirm={handleDeleteFile} okText="删除" cancelText="取消" okButtonProps={{ danger: true }}>
-              <Button block size="small" danger icon={<DeleteOutlined />}>
-                删除文件
-              </Button>
-            </Popconfirm>
+            {photo.storage_mode !== 'linked' && (
+              <Popconfirm title="永久删除文件？" description="此操作不可恢复" onConfirm={handleDeleteFile} okText="删除" cancelText="取消" okButtonProps={{ danger: true }}>
+                <Button block size="small" danger icon={<DeleteOutlined />}>
+                  删除文件
+                </Button>
+              </Popconfirm>
+            )}
           </Space>
         </>
       )}

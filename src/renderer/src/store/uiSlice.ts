@@ -5,6 +5,9 @@ interface UISlice {
   thumbnailSize: 'small' | 'medium' | 'large'
   setThumbnailSize: (s: 'small' | 'medium' | 'large') => void
 
+  rollThumbnailSize: 'small' | 'medium' | 'large'
+  setRollThumbnailSize: (s: 'small' | 'medium' | 'large') => void
+
   viewMode: 'rolls' | 'photos'
   setViewMode: (m: 'rolls' | 'photos') => void
 
@@ -29,6 +32,9 @@ interface UISlice {
 export const useUIStore = create<UISlice>((set) => ({
   thumbnailSize: 'medium',
   setThumbnailSize: (s) => set({ thumbnailSize: s }),
+
+  rollThumbnailSize: 'medium',
+  setRollThumbnailSize: (s) => set({ rollThumbnailSize: s }),
 
   viewMode: 'photos',
   setViewMode: (m) => set({ viewMode: m }),

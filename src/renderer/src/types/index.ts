@@ -69,6 +69,9 @@ export interface FolderScanResult {
   parentMatches: FolderAttrMatch[]  // matches from parent (root) folder name
   parsedDate: string | null         // YYYY-MM-DD or YYYY-MM-01 extracted from name
   inferredRollName: string          // pre-built suggested roll name
+  parsedLocationId: number | null   // matched location id from locations table
+  parsedLocationName: string | null // matched location display name
+  parsedSubject: string | null      // unmatched tokens interpreted as subject/theme
 }
 
 export interface FolderAttrMatch {
@@ -88,6 +91,7 @@ export interface RollImportConfig {
   shotDate?: string | null
   subLibraryId?: number | null
   createRoll: boolean
+  storageMode?: 'managed' | 'linked'
 }
 
 export interface Roll {
@@ -101,6 +105,7 @@ export interface Roll {
   thumb_ready?: number
   attributes: RollAttribute[]
   location_name: string | null
+  shot_date_min?: string | null
 }
 
 export interface RollAttribute {

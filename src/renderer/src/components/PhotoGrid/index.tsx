@@ -277,6 +277,32 @@ export default function PhotoGrid({
       onOk: remove
     })
   }
+
+  const handleDeleteFile = async () => {
+    if (!contextMenu) return
+    const targetIds = contextMenu.targetIds
+    // 统计其中 managed（可实际删除文件）的数量
+    const managedCount = targetIds.filter((id) => {
+      const p = photos.find((ph) => ph.id === id)
+      return p && p.storage_mode !== 'linked'
+    }).length
+    setContextMenu(null)
+    Modal.confirm({
+      title: targetIds.length > 1 ? `永久删除 ${targetIds.length} 张照片的文件？` : '永久删除该照片文件？',
+      content: managedCount < targetIds.length
+        ? `其中 ${targetIds.length - managedCount} 张为索引链接模式，仅删除索引；${managedCount} 张的本地文件将被永久删除，无法恢复。`
+        : '本地文件将被永久删除，无法恢复。',
+      okText: '删除',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: async () => {
+        await window.api.photos.delete(targetIds, true)
+        clearSelection()
+        message.success(`已删除 ${targetIds.length} 张照片`)
+        onPhotoDeleted()
+      }
+    })
+  }
   const handleBatchEdit = () => {
     if (!contextMenu) return
     setContextMenu(null)
@@ -492,6 +518,17 @@ export default function PhotoGrid({
             onClick={handleDeleteFromLib}
             danger
           />
+          {contextMenu.targetIds.some((id) => {
+            const p = photos.find((ph) => ph.id === id)
+            return p && p.storage_mode !== 'linked'
+          }) && (
+            <CtxItem
+              icon={<DeleteOutlined />}
+              label={contextTargetCount > 1 ? `删除文件（${contextTargetCount} 张）` : '删除文件'}
+              onClick={handleDeleteFile}
+              danger
+            />
+          )}
         </div>
       )}
     </div>

@@ -1,6 +1,6 @@
 # FilmManager 产品规格文档
 
-**版本：** 1.3.1
+**版本：** 1.3.3
 **技术栈：** Electron 29 · React 18 · TypeScript 5 · Ant Design 5 · Zustand 4 · better-sqlite3 9 · Sharp 0.33 · Leaflet 1.9 · @tanstack/react-virtual 3 · electron-vite 2
 
 ---
@@ -9,10 +9,10 @@
 
 FilmManager 是一款面向胶片摄影爱好者的本地桌面应用，用于管理胶片扫描文件。核心功能包括：
 
-- **导入与索引**：递归扫描文件夹，支持 JPG / PNG / TIFF / BMP / WebP 及主流 RAW 格式；导入时自动读取 EXIF（拍摄日期、相机与镜头型号），可自动收录未入库器材
-- **子文件夹卷导入**：批量按子文件夹识别为卷，模糊匹配胶片/相机/镜头属性，逐行确认后批量导入
+- **导入与索引**：递归扫描文件夹，支持 JPG / PNG / TIFF / BMP / WebP 及主流 RAW 格式；导入时自动读取 EXIF（拍摄日期、相机与镜头型号），可自动收录未入库器材；自动识别胶片格式（半格/135/120各规格/6×12 等）
+- **子文件夹卷导入**：批量按子文件夹识别为卷，模糊匹配胶片/相机/镜头属性，逐行确认后批量导入；支持拖放根目录；确认表格可内联新增相机/镜头/胶片格式等属性值
 - **胶卷管理**：将同一胶卷的照片组织为"卷"；支持封面、自动/手动命名、属性一致性验证
-- **双视图切换**：顶栏一键切换卷视图与照片视图；卷视图以卡片展示封面、属性与地点
+- **双视图切换**：顶栏一键切换卷视图与照片视图；卷视图以三档尺寸（小/中/大）独立于照片视图的缩略图尺寸；支持框选与右键多选，可批量编辑属性或删除
 - **属性标注**：相机、胶片、镜头、冲扫方式等多维度，支持批量编辑；胶卷属性附带品牌图标
 - **本地树状子库**：界面子库与 `{libraryRoot}/files/` 下的真实目录树保持一致
 - **三档视图**：小（横向列表）/中（网格）/大（带悬停预览面板）缩略图
@@ -154,7 +154,7 @@ CREATE TABLE attribute_types (
 | `lens` | 镜头型号 | 拍摄镜头，支持别名匹配 |
 | `dev_method` | 冲扫方式 | 自冲自扫 / 送冲送扫 / 自冲送扫 / 送冲自扫 |
 | `dev_lab` | 冲扫商家 | 冲洗店名称 |
-| `film_format` | 胶片格式 | 135/35mm · 120中画幅 · 4×5大画幅 · 8×10大画幅 |
+| `film_format` | 胶片格式 | 135/35mm · 半格/17.5mm · 645中画幅 · 6×6中画幅 · 6×7中画幅 · 6×8中画幅 · 6×12中画幅 · 120中画幅 · 4×5大画幅 · 8×10大画幅（导入时自动识别） |
 
 ---
 
@@ -162,11 +162,14 @@ CREATE TABLE attribute_types (
 
 ```sql
 CREATE TABLE attribute_values (
-  id                INTEGER PRIMARY KEY AUTOINCREMENT,
-  attribute_type_id INTEGER NOT NULL REFERENCES attribute_types(id) ON DELETE CASCADE,
-  value             TEXT    NOT NULL,
-  icon_key          TEXT,
-  is_preset         INTEGER DEFAULT 0,
+  id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+  attribute_type_id     INTEGER NOT NULL REFERENCES attribute_types(id) ON DELETE CASCADE,
+  value                 TEXT    NOT NULL,
+  icon_key              TEXT,
+  is_preset             INTEGER DEFAULT 0,
+  film_size_type        TEXT,          -- '135' | '120' | 'both' | NULL（仅 film 类型使用）
+  camera_formats        TEXT,          -- 逗号分隔令牌，如 '135,半格' / '6x6,645'（仅 camera 类型使用）
+  camera_default_format TEXT,          -- 相机默认/主画幅令牌（仅 camera 类型使用）
   UNIQUE(attribute_type_id, value)
 );
 ```
@@ -175,6 +178,9 @@ CREATE TABLE attribute_values (
 |---|---|
 | `icon_key` | 胶卷图标索引键（如 `kodak_portra_400`），仅 film 类型使用 |
 | `is_preset` | 1=系统内置预设值，0=用户自行添加的值 |
+| `film_size_type` | 胶卷可用尺寸约束：`'135'`=仅 135 胶卷；`'120'`=仅 120 中画幅；`'both'`=通用；`NULL`=未分类。导入时用于约束格式自动识别的匹配范围 |
+| `camera_formats` | 相机支持的画幅列表（逗号分隔令牌）。令牌：`135` `半格` `645` `6x6` `6x7` `6x8` `6x9` `6x12` `xpan` `4x5` `8x10`。仅 camera 类型使用 |
+| `camera_default_format` | 相机默认/主画幅令牌（取值同上）。仅 camera 类型使用 |
 
 **胶片图标机制**
 
@@ -330,6 +336,8 @@ color_profiles.file_path   → {resources/userData}/profiles/{name}.icc
 | 迁移 11 | `ALTER TABLE photos ADD COLUMN storage_mode TEXT NOT NULL DEFAULT 'managed'` |
 | 迁移 12 | `ALTER TABLE photos ADD COLUMN import_status TEXT NOT NULL DEFAULT 'ready'` |
 | 迁移 13 | 创建 `import_queue` 表（`id, source_path, status, photo_id, error_msg, queued_at, done_at`）及 `idx_import_queue_status` / `idx_import_queue_photo_id` 索引 |
+| 迁移 14 | `ALTER TABLE attribute_values ADD COLUMN film_size_type TEXT`；为已有胶卷条目写入分类值、统一 Fuji 名称、新增 Lucky c400、写入富士品牌别名 |
+| 迁移 15 | `ALTER TABLE attribute_values ADD COLUMN camera_formats TEXT`；`ALTER TABLE attribute_values ADD COLUMN camera_default_format TEXT`；新增 `6x9 中画幅`、`135 宽幅 / Xpan` 胶片格式预设值；为所有相机预设条目写入画幅信息（`migrateCameraFormats`），同时新增 Pentax MZ3/MZ5/MZ7/17/645 系列、Contax 645、Mamiya 645 系列、Bronica 系列、Fuji GW/TX 系列、Hasselblad Xpan 系列等相机预设 |
 
 ---
 
@@ -366,7 +374,7 @@ color_profiles.file_path   → {resources/userData}/profiles/{name}.icc
 |---|---|
 | `import.selectAndImport(options)` | 弹出系统文件夹选择对话框并导入 |
 | `import.importPaths(paths, options)` | 导入指定路径列表（拖拽导入用） |
-| `import.scanFolders()` | 弹出文件夹选择对话框，枚举子文件夹并模糊匹配属性，返回 `FolderScanResult[]` |
+| `import.scanFolders(rootPath?)` | 枚举子文件夹并模糊匹配属性，返回 `FolderScanResult[]`；`rootPath` 缺省时弹出系统文件夹选择对话框，也可直接传入路径（支持拖放） |
 | `import.importRolls(configs)` | 批量导入卷（子文件夹模式），每卷可指定属性、地点、拍摄日期、是否建卷 |
 | 事件 `import:total` | 扫描到的总文件数 |
 | 事件 `import:progress` | `{ imported, skipped, total? }` 逐文件推送 |
@@ -378,7 +386,7 @@ color_profiles.file_path   → {resources/userData}/profiles/{name}.icc
 **导入流程（单批次）**：
 1. 扫描目录，过滤支持格式
 2. 推送 `import:total`
-3. 逐文件：复制到目标子库目录 → INSERT photos → EXIF 提取器材 → 异步生成缩略图
+3. 逐文件：复制到目标子库目录 → INSERT photos → EXIF 提取器材 → **胶片格式自动识别** → 异步生成缩略图
 4. 同名文件自动追加 `_1` / `_2` 后缀，不覆盖
 5. 导入完成后：批量写入属性、地点、拍摄日期（均在应用层事务中执行）
 6. 若开启建卷：属性一致性检查（警告，不阻断）→ 调用 `rolls:create`
@@ -389,6 +397,32 @@ color_profiles.file_path   → {resources/userData}/profiles/{name}.icc
 3. 模糊匹配（normalized 包含关系）
 4. 别名匹配（一轮主名称，一轮别名，按长度降序）
 5. 若 `autoCreateEquipment=true` 且无匹配：`INSERT OR IGNORE` 新建属性值
+
+**胶片格式自动识别**（`detectFilmFormat` + `resolveFilmFormat`，`thumbnail.ts` / `import.ts`）：
+
+导入时将图像缩小至最大 600×600 做像素分析，识别链如下：
+
+-1. **相机画幅约束**（最高优先级，`resolveFilmFormat`）：若照片已关联相机且该相机有 `camera_formats`：
+    - 单一画幅 → 直接赋值，跳过一切像素分析
+    - 多画幅 → 与 `film_size_type` 取交集：交集唯一 → 赋值；交集为空 → 退回默认画幅；交集仍多个 → 继续像素分析
+0. **胶卷类型约束**：若照片已标注胶卷且该胶卷有 `film_size_type`，则跳过像素分析，直接按约束匹配：
+   - `'135'`：比例 ≤ 1.40 → `半格 / 17.5mm`；1.40–1.58 → `135 / 35mm`；其余 → null
+   - `'120'`：仅按比例区分 6×6 / 6×7 / 645 / 6×12（同下方 120 比例规则）
+1. **6×6 优先判断**：比例 ≈ 1.0（±0.08）直接返回 `6x6 中画幅`，先于齿孔检测，避免方形扫描边缘暗区误触发齿孔算法。
+2. **齿孔检测**：采样图像左侧和右侧各 3 列像素，检测是否存在规律性暗区（亮度 < 40，明暗转换次数 ≥ 4）。若两侧均触发 → 判为 135 系列：比例 < 1.45 归为 `半格 / 17.5mm`，否则归为 `135 / 35mm`。
+3. **120 背纸边纸检测**：扫描图像顶部 / 底部各约 5% 高度的行，若存在行平均亮度明显高于画面中心（>1.4× + 20）的行，判为 120 背纸特征，再按比例区分：
+   - 比例 ≈ 1.0（±0.08）→ `6x6 中画幅`
+   - 1.10–1.26 → `6x7 中画幅`
+   - 1.27–1.42 → `645 中画幅`（645 与 6×8 比例相同，统一归为 645）
+   - 1.88–2.15 → `6x12 中画幅`
+   - 比例不在以上范围 → 保守归为 `120 中画幅`
+4. **纯比例降级**（无像素信号时）：1.42–1.58 → `135 / 35mm`；1.0±0.08 → `6x6 中画幅`；1.10–1.23 → `6x7 中画幅`；1.26–1.40 → `645 中画幅`；1.88–2.15 → `6x12 中画幅`；其余区间返回 `null`（不赋值）。
+5. **赋值策略**（`assignFilmFormatAttribute`）：仅在照片尚无 `film_format` 属性时写入，绝不覆盖用户手动标注的值。
+
+**子文件夹卷模式确认表格新增功能**：
+
+- 相机、镜头、胶片格式等属性 Select 均支持在搜索框内直接新增值（`dropdownRender` + 内联"＋新增"按钮），无需退出导入对话框到库管理页操作
+- 拖放区域：导入对话框卷模式步骤新增拖放区，将包含子文件夹的根目录拖放至此可直接触发扫描，与"选择根目录"按钮等效
 
 **文件夹名称解析（子文件夹导入）**（`matchFolderName`）：
 - Pass 1：遍历主名称（按长度降序，最短 ≥ 2）
@@ -496,18 +530,20 @@ color_profiles.file_path   → {resources/userData}/profiles/{name}.icc
 
 | 方法 | 说明 |
 |---|---|
-| `rolls.list(params?)` | 列出所有卷（含照片数、封面缩略图、属性摘要、地点名）；支持与 photos:list 相同的全部筛选参数 |
+| `rolls.list(params?)` | 列出所有卷（含照片数、封面缩略图、属性摘要、地点名、`shot_date_min`）；支持与 photos:list 相同的全部筛选参数 |
 | `rolls.checkAttrConsistency(photoIds)` | 检查胶卷类型和相机是否一致，返回 `{ ok, warnings[] }` |
 | `rolls.create({ photoIds, name?, subLibraryId? })` | 建卷（自动命名、选封面、关联照片） |
 | `rolls.rename(id, name)` | 重命名卷 |
-| `rolls.delete(id)` | 删除卷记录（照片不受影响） |
+| `rolls.delete(id, deletePhotos?, deleteFiles?)` | 删除卷；`deletePhotos=true` 同时删 DB 照片记录；`deleteFiles=true` 同时删物理文件（linked 模式照片不删文件） |
+| `rolls.batchDelete(ids, deletePhotos?, deleteFiles?)` | 批量删除多个卷（同上语义） |
+| `rolls.batchSetAttributes(ids, attrs)` | 批量为多个卷的所有照片设置属性（`attrs: { typeId, valueId }[]`） |
 | `rolls.photos(rollId\|null, params)` | 分页查询卷内照片；`rollId=null` 返回未分卷照片（unassigned_pr） |
 | `rolls.forPhoto(photoId)` | 查询照片所属卷 |
 | `rolls.removePhotos(rollId, photoIds)` | 从卷中移除照片 |
 | `rolls.addPhotos(rollId, photoIds)` | 向卷中添加照片 |
 | `rolls.setCover(rollId, photoId)` | 设置封面照片 |
 
-**rolls:list 属性摘要**：批量查询每卷所有照片的 film / film_format / camera / lens 属性（DISTINCT，每类型只保留第一个值），以及第一个拍摄地点名称。
+**rolls:list 属性摘要**：批量查询每卷所有照片的 film / film_format / camera / lens 属性（DISTINCT，每类型只保留第一个值），以及第一个拍摄地点名称；`shot_date_min` 为该卷所有照片 `shot_date` 的最小值（SQL `MIN(member.shot_date)`）。
 
 ---
 
@@ -616,7 +652,8 @@ Store 按领域拆分为三个独立 slice，同时保留 `useStore()` 向后兼
 
 | 状态字段 | 说明 |
 |---|---|
-| `thumbnailSize` | `'small' \| 'medium' \| 'large'` |
+| `thumbnailSize` | `'small' \| 'medium' \| 'large'`（照片视图缩略图尺寸） |
+| `rollThumbnailSize` | `'small' \| 'medium' \| 'large'`（卷视图缩略图尺寸，独立于照片视图） |
 | `viewMode` | `'rolls' \| 'photos'` |
 | `activeRoll` | 当前进入卷内部时的 Roll 对象 |
 | `viewerPhoto / viewerPhotos / viewerIndex` | 全屏预览状态 |
@@ -775,11 +812,11 @@ Library.tsx 已从约 530 行的 God Component 拆分为三个自定义 hook，�
 
 **子文件夹卷模式（步骤 select → scan → confirm → importing → done）**
 
-- 点击"选择根目录并扫描"→ `import:scanFolders` → 返回 `FolderScanResult[]`
+- 拖放区域：将包含子文件夹的根目录拖放至拖放区或点击"选择根目录并扫描"按钮 → `import:scanFolders(rootPath?)` → 返回 `FolderScanResult[]`
 - Confirm 表格（`RollConfirmRow`）：每行显示文件夹名/文件数/解析日期，可编辑：
   - 卷名（点击 EditOutlined 切换为 Input）
   - 胶片（点击 FilmTag 区域打开独立 FilmIconPicker）
-  - 其他属性（compact Select）
+  - 其他属性（compact Select）；所有属性 Select 均支持搜索框内直接内联新增值（`dropdownRender` + "＋新增"条目），无需退出对话框
   - 地点（compact Select，本地模糊搜索）
   - 拍摄日期（compact DatePicker）
   - 建卷 Switch（每行独立）
@@ -795,13 +832,31 @@ Library.tsx 已从约 530 行的 God Component 拆分为三个自定义 hook，�
 
 ### 8.8 卷视图（RollsView）
 
-**卡片布局**：ResizeObserver 监听容器宽度，≥1400px 时 6 列，否则 4 列；卡片高度 220px
-**封面**：从 `thumbCache`（thumbDataUrl 异步加载）显示，无封面时显示灰色图标；右下角照片数角标（背景模糊）
-**信息栏**：胶片图标+名称（截断）+ 格式 Tag + 地点
+**三档视图尺寸**（由 `rollThumbnailSize` 独立控制，与照片视图 `thumbnailSize` 互不影响）：
+
+| 视图 | 窗口模式 (<1400px) | 宽屏模式 (≥1400px) | 卡片高度 |
+|---|---|---|---|
+| 小（横向列表） | 1 列 | 2 列 | 80px 行高，60×60 封面缩略图 |
+| 中（网格） | 4 列 | 6 列 | 封面 148px + 信息栏 72px |
+| 大（宽网格） | 2 列 | 3 列 | 封面 220px + 信息栏 100px（额外显示相机/镜头/拍摄年月） |
+
+**封面**：从 `thumbCache` 异步加载，无封面时显示灰色图标；右下角照片数角标（背景模糊）
+**信息栏（中/大）**：胶片图标 + 名称（截断）+ 格式 Tag + 地点；大视图另显示相机、镜头、`shot_date_min`（年月）
+**小视图列表**：封面缩略图（60×60）+ 名称 + 胶片名 + 格式 + 照片数，地点 Tooltip
 **重命名**：点击 EditOutlined → 行内 input（autoFocus，blur/Enter 保存，Escape 取消）
-**删除**：Popconfirm 确认（删除卷记录，照片不受影响）
 **地点设置**：EnvironmentOutlined 按钮打开 Popover（显示当前地点 + 清除按钮 + LocationPicker）；批量为该卷所有照片 setForPhotos
 **"其他图片"卡片**：虚线边框，点击进入未分卷照片视图
+
+**多选与框选**
+
+- **橡皮筋框选**：在卡片空白区域 mousedown 启动拖拽，松开时命中卡片坐标矩形（小视图按行高区间，中/大视图按网格格子坐标）
+- **Ctrl/Meta/Shift 点击**：逐一切换单张卷的选中状态
+- **右键菜单**：右键点击未选中卡片时替换当前选中集；菜单项：重命名（仅单选）、批量编辑属性、删除
+
+**批量操作**
+
+- **批量属性编辑**：Modal 中为所有选中卷的全部照片批量设置胶片/相机/镜头等属性（调用 `rolls.batchSetAttributes`）
+- **删除**：三档 Radio 选项——仅删除卷索引 / 同时删除数据库照片 / 同时删除物理文件；linked 模式照片即使选"删除文件"也只删 DB 记录
 
 ### 8.9 胶卷库（FilmLibraryModal）
 
@@ -968,3 +1023,5 @@ App（ConfigProvider: 深色主题 #141414，primary #c8832a）
 | **1.2.1** | **地图回归 Leaflet**，三源自动轮换（OSM.de → Esri → OSM），25s 超时 + 2 次错误自动切换；LocationPicker 恢复纯检索+手动坐标模式 |
 | **1.3.0** | **架构重构与稳定性加固**：Zustand Store 拆分为 3 个领域 slice；Library.tsx 拆分为 3 个自定义 hook（usePhotoLoader / useRollLoader / useLibraryData）；提取共享类型 `import-types.ts`；删除 walkDirect 别名；基于内容哈希（MD5 文件大小+前 64KB）的重复文件检测；数据库新增 content_hash 列+索引、original_name 索引；COUNT 查询优化（COUNT(DISTINCT p.id) 替代子查询包裹）；photos:delete / photos:setAttributes 操作原子化 |
 | **1.3.1** | **两阶段导入与存储模式**：第一阶段批量快速登记占位记录（`import_status='indexing'`）立即刷新图库骨架卡片；第二阶段后台完成 EXIF/拷贝/缩略图；存储模式新增"建立索引"（linked）选项，仅记录原始路径不复制文件；全局后台进度条（ImportProgressBar）固定显示于内容区底部；新增 `import_queue` 任务队列表；Bug 修复：linked 模式删除/移动不操作源文件；processQueueItem 错误回滚用 `copiedPath` 追踪实际已拷贝路径；对话框关闭时正确重置 storageMode |
+| **1.3.1+** | **胶片格式自动识别与卷导入增强**：① 导入时自动识别胶片格式（半格/135/645/6×6/6×7/6×12等），通过像素采样检测齿孔和120背纸边纸，优先赋值、不覆盖手动标注；② 新增半格/645/6×6/6×7/6×8/6×12等格式预设值；③ 子文件夹卷确认表格所有属性Select支持内联新增值；④ 卷模式新增拖放根目录区域，直接拖入触发扫描 |
+| **1.3.2** | **格式识别优化与胶卷分类**：① 修复 6×6 中画幅被误判为半格——比例 ≈ 1.0 先于齿孔检测提前返回；② 新增 `film_size_type` 字段，为所有内置胶卷条目分类（`'135'`/`'120'`/`'both'`），导入时按已标注胶卷类型约束格式匹配范围，135 胶卷仅在半格/135间选择，120 胶卷仅按比例区分中画幅规格；③ 统一所有 fuji→Fuji 命名，为富士品牌写入别名（fuji/富士/fujifilm/富士胶片）；④ 新增 Lucky c400 预设（both）；⑤ 修复 importRolls 未将 filmName 传入 importOptions 导致格式约束失效的问题 |

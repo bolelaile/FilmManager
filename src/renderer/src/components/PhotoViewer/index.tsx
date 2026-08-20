@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { Spin, Button, Select, Divider, DatePicker, Input, message, Modal, Tooltip, Popover } from 'antd'
-import { FolderOpenOutlined, PlusOutlined, PictureOutlined, RotateRightOutlined, EnvironmentOutlined, CloseOutlined, AppstoreOutlined, LoadingOutlined, StarFilled } from '@ant-design/icons'
+import { FolderOpenOutlined, PlusOutlined, PictureOutlined, RotateRightOutlined, EnvironmentOutlined, CloseOutlined, AppstoreOutlined, LoadingOutlined, StarFilled, DownloadOutlined } from '@ant-design/icons'
 import { useStore } from '../../store'
 import type { Photo, IccProfile, AttributeType, AttributeValue, Location } from '../../types'
 import { FilmTag, FilmIconPicker } from '../FilmIcon'
@@ -43,7 +43,7 @@ function HistogramCanvas({ data }: { data: { r: number[]; g: number[]; b: number
     const W = canvas.width
     const H = canvas.height
     ctx.clearRect(0, 0, W, H)
-    ctx.fillStyle = '#0e0e0e'
+    ctx.fillStyle = 'var(--bg-surface)'
     ctx.fillRect(0, 0, W, H)
     if (!data) return
     const maxVal = Math.max(...data.r.slice(1, 255), ...data.g.slice(1, 255), ...data.b.slice(1, 255))
@@ -128,27 +128,27 @@ function AttrEditor({ photo, attrTypes, onChanged }: AttrEditorProps) {
 
         return (
           <div key={type.id} style={{ marginBottom: 8 }}>
-            <div style={{ color: '#4a4a4a', fontSize: 11, marginBottom: 3 }}>{type.display_name}</div>
+            <div style={{ color: 'var(--text-dim)', fontSize: 11, marginBottom: 3 }}>{type.display_name}</div>
 
             {isFilm ? (
               <div
                 onClick={() => setFilmPickerOpen(true)}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px',
-                  background: '#1a1a1a', border: currentFilmValue ? '1px solid #c8832a' : '1px solid #2a2a2a',
+                  background: 'var(--bg-elevated)', border: currentFilmValue ? '1px solid var(--accent)' : '1px solid var(--border)',
                   borderRadius: 4, cursor: 'pointer', minHeight: 30
                 }}
               >
                 {currentFilmValue ? (
                   <>
-                    <FilmTag value={currentFilmValue.value} iconKey={currentFilmValue.icon_key} iconSize={18} style={{ color: '#ddd', fontSize: 12, flex: 1 }} />
+                    <FilmTag value={currentFilmValue.value} iconKey={currentFilmValue.icon_key} iconSize={18} style={{ color: 'var(--text-primary)', fontSize: 12, flex: 1 }} />
                     <Button size="small" type="text" onClick={(e) => { e.stopPropagation(); handleAttrChange(type.id, null) }}
-                      style={{ color: '#555', padding: 0, fontSize: 11, height: 18, minWidth: 'auto' }}>✕</Button>
+                      style={{ color: 'var(--text-dim)', padding: 0, fontSize: 11, height: 18, minWidth: 'auto' }}>✕</Button>
                   </>
                 ) : (
                   <>
-                    <PictureOutlined style={{ color: '#555', fontSize: 13 }} />
-                    <span style={{ color: '#555', fontSize: 12 }}>点击选择胶片...</span>
+                    <PictureOutlined style={{ color: 'var(--text-dim)', fontSize: 13 }} />
+                    <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>点击选择胶片...</span>
                   </>
                 )}
               </div>
@@ -172,9 +172,9 @@ function AttrEditor({ photo, attrTypes, onChanged }: AttrEditorProps) {
                     {menu}
                     {searchText && !alreadyExists && (
                       <>
-                        <Divider style={{ margin: '4px 0', borderColor: '#2a2a2a' }} />
+                        <Divider style={{ margin: '4px 0', borderColor: 'var(--border)' }} />
                         <div
-                          style={{ padding: '5px 8px', cursor: 'pointer', color: '#c8832a', fontSize: 12 }}
+                          style={{ padding: '5px 8px', cursor: 'pointer', color: 'var(--accent)', fontSize: 12 }}
                           onMouseDown={async (e) => { e.preventDefault(); await handleCreateAndSelect(type.id, searchText) }}
                         >
                           <PlusOutlined /> 新增 "{searchText}"
@@ -183,7 +183,7 @@ function AttrEditor({ photo, attrTypes, onChanged }: AttrEditorProps) {
                     )}
                   </>
                 )}
-                styles={{ popup: { root: { background: '#1a1a1a' } } }}
+                styles={{ popup: { root: { background: 'var(--bg-elevated)' } } }}
               />
             )}
           </div>
@@ -224,7 +224,8 @@ export default function PhotoViewer({ attrTypes, onAttrChanged }: PhotoViewerPro
     closeViewer,
     iccProfiles,
     activeProfile,
-    setActiveProfile
+    setActiveProfile,
+    openExport
   } = useStore()
 
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
@@ -236,6 +237,8 @@ export default function PhotoViewer({ attrTypes, onAttrChanged }: PhotoViewerPro
   // location
   const [photoLocations, setPhotoLocations] = useState<Location[]>([])
   const [showLocationPicker, setShowLocationPicker] = useState(false)
+  // EXIF
+  const [exifData, setExifData] = useState<{ iso: number | null; fNumber: number | null; exposureTime: number | null; focalLength: number | null } | null>(null)
   // open with
   const [openWithApps, setOpenWithApps] = useState<{ name: string; exePath: string }[] | null>(null)
   const [openWithLoading, setOpenWithLoading] = useState(false)
@@ -255,9 +258,11 @@ export default function PhotoViewer({ attrTypes, onAttrChanged }: PhotoViewerPro
     setLivePhoto(null)
     setPhotoLocations([])
     setShowLocationPicker(false)
+    setExifData(null)
     if (basePhoto) {
       window.api.photos.get(basePhoto.id).then((p) => { if (p) setLivePhoto(p as Photo) })
       window.api.locations.forPhoto(basePhoto.id).then((locs) => setPhotoLocations(locs as Location[]))
+      window.api.photos.exif(basePhoto.id).then((e) => { if (e) setExifData(e as typeof exifData) }).catch(() => {})
     }
   }, [basePhoto?.id])
 
@@ -411,7 +416,7 @@ export default function PhotoViewer({ attrTypes, onAttrChanged }: PhotoViewerPro
         border: 'none',
         borderRadius: 4,
         padding: '14px 10px',
-        color: disabled ? '#333' : '#ccc',
+        color: disabled ? 'var(--text-dim)' : 'var(--text-primary)',
         cursor: disabled ? 'not-allowed' : 'pointer',
         fontSize: 24,
         zIndex: 2,
@@ -431,18 +436,18 @@ export default function PhotoViewer({ attrTypes, onAttrChanged }: PhotoViewerPro
       style={{ top: 20, padding: 0 }}
       mask={false}
       styles={{
-        content: { background: '#111', padding: 0, border: '1px solid #353535', borderRadius: 8, overflow: 'hidden', boxShadow: '0 8px 40px rgba(0,0,0,0.85)' },
-        header: { background: '#111', borderBottom: '1px solid #1f1f1f', padding: '0 52px 0 16px', margin: 0, height: 52, display: 'flex', alignItems: 'center' },
+        content: { background: 'var(--bg-base)', padding: 0, border: '1px solid var(--border-strong)', borderRadius: 8, overflow: 'hidden', boxShadow: '0 8px 40px rgba(0,0,0,0.85)' },
+        header: { background: 'var(--bg-base)', borderBottom: '1px solid var(--border)', padding: '0 52px 0 16px', margin: 0, height: 52, display: 'flex', alignItems: 'center' },
         body: { padding: 0, height: 'calc(100vh - 130px)', display: 'flex', overflow: 'hidden' }
       }}
       title={basePhoto && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, height: 52 }}>
-          <span style={{ color: '#bbb', fontSize: 13, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <span style={{ color: 'var(--text-primary)', fontSize: 13, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {basePhoto.original_name}
-            {imgSize && <span style={{ color: '#555', marginLeft: 12 }}>{imgSize.w} × {imgSize.h}</span>}
-            {scale !== 1 && <span style={{ color: '#c8832a', marginLeft: 10, fontSize: 11 }}>{Math.round(scale * 100)}%</span>}
+            {imgSize && <span style={{ color: 'var(--text-dim)', marginLeft: 12 }}>{imgSize.w} × {imgSize.h}</span>}
+            {scale !== 1 && <span style={{ color: 'var(--accent)', marginLeft: 10, fontSize: 11 }}>{Math.round(scale * 100)}%</span>}
           </span>
-          <span style={{ color: '#555', fontSize: 12 }}>{viewerIndex + 1} / {viewerPhotos.length}</span>
+          <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>{viewerIndex + 1} / {viewerPhotos.length}</span>
           <Tooltip title={basePhoto?.starred ? '取消收藏' : '加入收藏'}>
             <Button
               size="small"
@@ -450,11 +455,12 @@ export default function PhotoViewer({ attrTypes, onAttrChanged }: PhotoViewerPro
               onClick={async (e) => {
                 e.stopPropagation()
                 if (!basePhoto) return
+                const newStarred = basePhoto.starred ? 0 : 1
                 await window.api.photos.toggleStar(basePhoto.id)
-                setLivePhoto({ ...(photo ?? basePhoto), starred: basePhoto.starred ? 0 : 1 })
-                window.dispatchEvent(new CustomEvent('photo-star-changed', { detail: { id: basePhoto.id } }))
+                setLivePhoto({ ...(photo ?? basePhoto), starred: newStarred })
+                window.dispatchEvent(new CustomEvent('photo-star-changed', { detail: { id: basePhoto.id, starred: newStarred } }))
               }}
-              style={{ background: '#1f1f1f', borderColor: '#333', color: basePhoto?.starred ? '#c8832a' : '#555' }}
+              style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)', color: basePhoto?.starred ? 'var(--accent)' : 'var(--text-dim)' }}
             />
           </Tooltip>
           <Tooltip title="顺时针旋转 90°">
@@ -462,7 +468,15 @@ export default function PhotoViewer({ attrTypes, onAttrChanged }: PhotoViewerPro
               size="small"
               icon={<RotateRightOutlined />}
               onClick={(e) => { e.stopPropagation(); handleRotate() }}
-              style={{ background: '#1f1f1f', borderColor: '#333', color: '#c8832a' }}
+              style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--accent)' }}
+            />
+          </Tooltip>
+          <Tooltip title="导出（带胶片边框）">
+            <Button
+              size="small"
+              icon={<DownloadOutlined />}
+              onClick={(e) => { e.stopPropagation(); if (basePhoto) openExport([basePhoto.id], '当前照片') }}
+              style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--accent)' }}
             />
           </Tooltip>
           <Popover
@@ -471,17 +485,17 @@ export default function PhotoViewer({ attrTypes, onAttrChanged }: PhotoViewerPro
             trigger="click"
             placement="bottomRight"
             overlayStyle={{ zIndex: 3000 }}
-            overlayInnerStyle={{ background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 8, padding: '4px 0', minWidth: 180 }}
+            overlayInnerStyle={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, padding: '4px 0', minWidth: 180 }}
             title={null}
             content={
               <div onClick={(e) => e.stopPropagation()} style={{ minWidth: 180 }}>
                 {openWithLoading && (
-                  <div style={{ padding: '8px 12px', color: '#666', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <div style={{ padding: '8px 12px', color: 'var(--text-secondary)', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
                     <LoadingOutlined /> 检测已安装应用…
                   </div>
                 )}
                 {!openWithLoading && openWithApps !== null && openWithApps.length === 0 && (
-                  <div style={{ padding: '8px 12px', color: '#555', fontSize: 12 }}>
+                  <div style={{ padding: '8px 12px', color: 'var(--text-dim)', fontSize: 12 }}>
                     未检测到图像处理应用
                   </div>
                 )}
@@ -489,11 +503,11 @@ export default function PhotoViewer({ attrTypes, onAttrChanged }: PhotoViewerPro
                   <div
                     key={app.exePath}
                     onClick={() => handleOpenWithApp(app.exePath)}
-                    style={{ padding: '7px 14px', cursor: 'pointer', color: '#ccc', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}
-                    onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = '#2a2a2a' }}
+                    style={{ padding: '7px 14px', cursor: 'pointer', color: 'var(--text-primary)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}
+                    onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--bg-surface)' }}
                     onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
                   >
-                    <AppstoreOutlined style={{ color: '#c8832a', fontSize: 13 }} />
+                    <AppstoreOutlined style={{ color: 'var(--accent)', fontSize: 13 }} />
                     {app.name}
                   </div>
                 ))}
@@ -505,12 +519,12 @@ export default function PhotoViewer({ attrTypes, onAttrChanged }: PhotoViewerPro
                 size="small"
                 icon={<AppstoreOutlined />}
                 onClick={(e) => e.stopPropagation()}
-                style={{ background: '#1f1f1f', borderColor: '#333', color: '#ccc' }}
+                style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
               />
             </Tooltip>
           </Popover>
           <Button size="small" icon={<FolderOpenOutlined />} onClick={(e) => { e.stopPropagation(); window.api.library.revealFile(basePhoto.file_path) }}
-            style={{ background: '#1f1f1f', borderColor: '#333', color: '#ccc' }} />
+            style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }} />
         </div>
       )}
     >
@@ -527,7 +541,7 @@ export default function PhotoViewer({ attrTypes, onAttrChanged }: PhotoViewerPro
           {loading ? (
             <div style={{ textAlign: 'center' }}>
               <Spin size="large" />
-              <div style={{ color: '#666', marginTop: 12, fontSize: 13 }}>{isRaw ? '解码 RAW 文件…' : '加载中…'}</div>
+              <div style={{ color: 'var(--text-secondary)', marginTop: 12, fontSize: 13 }}>{isRaw ? '解码 RAW 文件…' : '加载中…'}</div>
             </div>
           ) : previewUrl ? (
             <img
@@ -554,7 +568,7 @@ export default function PhotoViewer({ attrTypes, onAttrChanged }: PhotoViewerPro
               }}
             />
           ) : (
-            <div style={{ textAlign: 'center', color: '#555' }}>
+            <div style={{ textAlign: 'center', color: 'var(--text-dim)' }}>
               <div style={{ fontSize: 48, marginBottom: 12 }}>⚠</div>
               <div>无法加载预览</div>
             </div>
@@ -564,7 +578,7 @@ export default function PhotoViewer({ attrTypes, onAttrChanged }: PhotoViewerPro
         </div>
 
         {/* Side panel */}
-        <div style={{ width: 288, background: '#111', borderLeft: '1px solid #1f1f1f', display: 'flex', flexDirection: 'column', overflow: 'hidden', flexShrink: 0 }}>
+        <div style={{ width: 288, background: 'var(--bg-base)', borderLeft: '1px solid var(--border)', display: 'flex', flexDirection: 'column', overflow: 'hidden', flexShrink: 0 }}>
           <div style={{ flex: 1, overflowY: 'auto', padding: '12px 14px 20px' }}>
 
             {/* Histogram */}
@@ -598,10 +612,10 @@ export default function PhotoViewer({ attrTypes, onAttrChanged }: PhotoViewerPro
               {basePhoto.file_size != null && <MetaRow label="大小" value={formatSize(basePhoto.file_size)} />}
               {/* Shot date — editable */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                <span style={{ color: '#4a4a4a', fontSize: 11, width: 56, flexShrink: 0 }}>拍摄日期</span>
+                <span style={{ color: 'var(--text-dim)', fontSize: 11, width: 56, flexShrink: 0 }}>拍摄日期</span>
                 <DatePicker
                   size="small"
-                  style={{ flex: 1, background: '#1a1a1a', borderColor: '#2a2a2a', fontSize: 11 }}
+                  style={{ flex: 1, background: 'var(--bg-elevated)', borderColor: 'var(--border)', fontSize: 11 }}
                   value={photo?.shot_date ? dayjs(photo.shot_date) : null}
                   placeholder={(photo?.imported_at ?? '').substring(0, 10) || '入库时间'}
                   onChange={async (d) => {
@@ -616,7 +630,18 @@ export default function PhotoViewer({ attrTypes, onAttrChanged }: PhotoViewerPro
               <MetaRow label="入库时间" value={(basePhoto.imported_at ?? '').substring(0, 16)} />
             </div>
 
-            <Divider style={{ borderColor: '#1a1a1a', margin: '8px 0' }} />
+            {/* EXIF params */}
+            {exifData && (exifData.iso != null || exifData.fNumber != null || exifData.exposureTime != null || exifData.focalLength != null) && (
+              <div style={{ marginBottom: 14 }}>
+                <SectionLabel>拍摄参数</SectionLabel>
+                {exifData.iso != null && <MetaRow label="ISO" value={String(exifData.iso)} />}
+                {exifData.fNumber != null && <MetaRow label="光圈" value={`f/${exifData.fNumber.toFixed(1)}`} />}
+                {exifData.exposureTime != null && <MetaRow label="快门" value={formatExposureTime(exifData.exposureTime)} />}
+                {exifData.focalLength != null && <MetaRow label="焦距" value={`${exifData.focalLength.toFixed(0)} mm`} />}
+              </div>
+            )}
+
+            <Divider style={{ borderColor: 'var(--border)', margin: '8px 0' }} />
 
             {/* Attribute editing */}
             <div style={{ marginBottom: 14 }}>
@@ -624,23 +649,23 @@ export default function PhotoViewer({ attrTypes, onAttrChanged }: PhotoViewerPro
               {photo && attrTypes.length > 0 ? (
                 <AttrEditor photo={photo} attrTypes={attrTypes} onChanged={handleAttrChanged} />
               ) : (
-                <div style={{ color: '#444', fontSize: 12 }}>加载中...</div>
+                <div style={{ color: 'var(--text-dim)', fontSize: 12 }}>加载中...</div>
               )}
             </div>
 
             {/* Notes */}
             {photo?.notes && (
               <>
-                <Divider style={{ borderColor: '#1a1a1a', margin: '8px 0' }} />
+                <Divider style={{ borderColor: 'var(--border)', margin: '8px 0' }} />
                 <div>
                   <SectionLabel>备注</SectionLabel>
-                  <div style={{ color: '#888', fontSize: 12, lineHeight: '18px', wordBreak: 'break-all' }}>{photo.notes}</div>
+                  <div style={{ color: 'var(--text-secondary)', fontSize: 12, lineHeight: '18px', wordBreak: 'break-all' }}>{photo.notes}</div>
                 </div>
               </>
             )}
 
             {/* Location */}
-            <Divider style={{ borderColor: '#1a1a1a', margin: '8px 0' }} />
+            <Divider style={{ borderColor: 'var(--border)', margin: '8px 0' }} />
             <div style={{ marginBottom: 8 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
                 <SectionLabel>拍摄地点</SectionLabel>
@@ -648,28 +673,28 @@ export default function PhotoViewer({ attrTypes, onAttrChanged }: PhotoViewerPro
                   size="small" type="text"
                   icon={showLocationPicker ? <CloseOutlined /> : <PlusOutlined />}
                   onClick={() => setShowLocationPicker((v) => !v)}
-                  style={{ color: '#c8832a', padding: 0, height: 18 }}
+                  style={{ color: 'var(--accent)', padding: 0, height: 18 }}
                 />
               </div>
               {photoLocations.map((loc) => (
-                <div key={loc.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginBottom: 5, background: '#1a1a1a', borderRadius: 4, padding: '5px 8px' }}>
-                  <EnvironmentOutlined style={{ color: '#c8832a', fontSize: 12, marginTop: 2, flexShrink: 0 }} />
+                <div key={loc.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginBottom: 5, background: 'var(--bg-elevated)', borderRadius: 4, padding: '5px 8px' }}>
+                  <EnvironmentOutlined style={{ color: 'var(--accent)', fontSize: 12, marginTop: 2, flexShrink: 0 }} />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ color: '#ccc', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{loc.name}</div>
+                    <div style={{ color: 'var(--text-primary)', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{loc.name}</div>
                     {loc.address && (
-                      <div style={{ color: '#555', fontSize: 10, marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{loc.address}</div>
+                      <div style={{ color: 'var(--text-dim)', fontSize: 10, marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{loc.address}</div>
                     )}
                   </div>
                   <Button
                     size="small" type="text"
                     icon={<CloseOutlined />}
                     onClick={() => handleRemoveLocation(loc.id)}
-                    style={{ color: '#444', padding: 0, fontSize: 10, height: 18, flexShrink: 0 }}
+                    style={{ color: 'var(--text-dim)', padding: 0, fontSize: 10, height: 18, flexShrink: 0 }}
                   />
                 </div>
               ))}
               {photoLocations.length === 0 && !showLocationPicker && (
-                <div style={{ color: '#444', fontSize: 11 }}>暂无拍摄地点</div>
+                <div style={{ color: 'var(--text-dim)', fontSize: 11 }}>暂无拍摄地点</div>
               )}
               {showLocationPicker && (
                 <div style={{ marginTop: 6 }}>
@@ -679,8 +704,8 @@ export default function PhotoViewer({ attrTypes, onAttrChanged }: PhotoViewerPro
             </div>
           </div>
 
-          <div style={{ padding: '8px 14px', borderTop: '1px solid #1a1a1a', flexShrink: 0 }}>
-            <div style={{ color: '#383838', fontSize: 11, textAlign: 'center' }}>
+          <div style={{ padding: '8px 14px', borderTop: '1px solid var(--border)', flexShrink: 0 }}>
+            <div style={{ color: 'var(--text-dim)', fontSize: 11, textAlign: 'center' }}>
               Esc 退出 · 滚轮缩放 · ← → 切换
             </div>
           </div>
@@ -692,7 +717,7 @@ export default function PhotoViewer({ attrTypes, onAttrChanged }: PhotoViewerPro
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{ color: '#555', fontSize: 11, marginBottom: 6, letterSpacing: 0.4, textTransform: 'uppercase' }}>
+    <div style={{ color: 'var(--text-dim)', fontSize: 11, marginBottom: 6, letterSpacing: 0.4, textTransform: 'uppercase' }}>
       {children}
     </div>
   )
@@ -701,8 +726,8 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 function MetaRow({ label, value }: { label: string; value: string }) {
   return (
     <div style={{ display: 'flex', gap: 8, marginBottom: 4, fontSize: 12, lineHeight: '18px', alignItems: 'flex-start' }}>
-      <span style={{ color: '#4a4a4a', flexShrink: 0, width: 56 }}>{label}</span>
-      <span style={{ color: '#999', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={value}>{value}</span>
+      <span style={{ color: 'var(--text-dim)', flexShrink: 0, width: 56 }}>{label}</span>
+      <span style={{ color: 'var(--text-secondary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={value}>{value}</span>
     </div>
   )
 }
@@ -711,4 +736,10 @@ function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function formatExposureTime(seconds: number): string {
+  if (seconds >= 1) return `${seconds.toFixed(1)} s`
+  const denom = Math.round(1 / seconds)
+  return `1/${denom} s`
 }

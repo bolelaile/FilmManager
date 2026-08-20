@@ -99,8 +99,10 @@ export function registerRollsIpc(): void {
     let hasPhotoFilters = false
     for (const [typeId, valueIds] of Object.entries(filters)) {
       if (!valueIds || valueIds.length === 0) continue
+      const tid = parseInt(typeId, 10)
+      if (isNaN(tid)) continue
       const alias = `roll_pa${joinIdx++}`
-      sql += ` JOIN photo_attributes ${alias} ON ${alias}.photo_id = member.id AND ${alias}.attribute_type_id = ${typeId} AND ${alias}.attribute_value_id IN (${valueIds.map(() => '?').join(',')})`
+      sql += ` JOIN photo_attributes ${alias} ON ${alias}.photo_id = member.id AND ${alias}.attribute_type_id = ${tid} AND ${alias}.attribute_value_id IN (${valueIds.map(() => '?').join(',')})`
       args.push(...valueIds)
       hasPhotoFilters = true
     }
@@ -423,8 +425,10 @@ export function registerRollsIpc(): void {
 
     for (const [typeId, valueIds] of Object.entries(filters)) {
       if (!valueIds || (valueIds as number[]).length === 0) continue
+      const tid = parseInt(typeId, 10)
+      if (isNaN(tid)) continue
       const alias = `pa${joinIdx++}`
-      sql += ` JOIN photo_attributes ${alias} ON ${alias}.photo_id = p.id AND ${alias}.attribute_type_id = ${typeId} AND ${alias}.attribute_value_id IN (${(valueIds as number[]).map(() => '?').join(',')})`
+      sql += ` JOIN photo_attributes ${alias} ON ${alias}.photo_id = p.id AND ${alias}.attribute_type_id = ${tid} AND ${alias}.attribute_value_id IN (${(valueIds as number[]).map(() => '?').join(',')})`
       args.push(...(valueIds as number[]))
     }
 
@@ -552,8 +556,10 @@ function getPhotolessCount(db: ReturnType<typeof getDb>, params: RollQueryParams
   let joinIdx = 0
   for (const [typeId, valueIds] of Object.entries(filters)) {
     if (!valueIds || valueIds.length === 0) continue
+    const tid = parseInt(typeId, 10)
+    if (isNaN(tid)) continue
     const alias = `other_pa${joinIdx++}`
-    sql += ` JOIN photo_attributes ${alias} ON ${alias}.photo_id = p.id AND ${alias}.attribute_type_id = ${typeId} AND ${alias}.attribute_value_id IN (${valueIds.map(() => '?').join(',')})`
+    sql += ` JOIN photo_attributes ${alias} ON ${alias}.photo_id = p.id AND ${alias}.attribute_type_id = ${tid} AND ${alias}.attribute_value_id IN (${valueIds.map(() => '?').join(',')})`
     args.push(...valueIds)
   }
   const wheres = ['NOT EXISTS (SELECT 1 FROM photo_rolls other_pr WHERE other_pr.photo_id = p.id)']

@@ -10,9 +10,49 @@ import {
 } from '@ant-design/icons'
 import type { AttributeType, AttributeValue, IccProfile } from '../../types'
 import { useStore } from '../../store'
+import { THEMES } from '../../store/uiSlice'
 import { FilmIconImg } from '../FilmIcon'
 
 const CHANGELOG: { version: string; summary: string; items: string[] }[] = [
+  {
+    version: '1.3.7',
+    summary: '导出功能 Canvas 重构（参考 film-index-generator）+ 性能与健壮性优化',
+    items: [
+      '导出改为参考 film-index-generator 的 Canvas 方法：主进程 @napi-rs/canvas 渲染，物理 mm 几何（5.5mm 片基带/4.75mm 齿孔距）、暖色渐变片基 + 齿孔浮雕渐变',
+      '边字真实化：Courier New 等宽粗体 + 发光阴影 + 品牌/预设交替 + 帧号 + A 后缀 + 条码竖条；墨色按工艺自动匹配（C-41橙/黑白白/E-6暖/ECN-2米）+ Kodak/Fuji/Ilford 品牌库',
+      '照片 cover 填满帧区 + 拖动/缩放自定义裁切（始终填满不留缝）；9 画幅覆盖；导出居中修复（水平 padding 对称）',
+      '格式精简为 JPEG/PNG（对齐参考项目）；旧预设自动迁移 templateId→formatId',
+      '导入并行化：min(4, CPU-2) 有界并发 + 异步 copyFile，大批量导入显著提速',
+      'Worker Pool 错误处理：worker 崩溃时批量 reject 在途任务并自动重建，修复 thumb_ready 永久卡 0',
+      'GPS 缓存 + COUNT 缓存 + 启动迁移版本门控（seed_version）',
+    ],
+  },
+  {
+    version: '1.3.6',
+    summary: '带胶片边框导出功能',
+    items: [
+      '边框模板按胶片格式自动匹配：135 齿孔条 / 半格竖向齿孔 / Xpan 宽幅齿孔 / 120 背纸文字边 / 大画幅净边+缺角 / 无边框共 6 类',
+      '边字 token 系统：{film}{camera}{date}{iso}{aperture}{shutter}{frame_no} 等，支持批量递增帧号',
+      '导出格式 JPEG/PNG/WebP/BMP/TIFF，8/10/12/16-bit 位深，长边像素/倍率/DPI，透明/高斯模糊/纯色背景',
+      '单张/选中/整卷/当前筛选批量导出（并发限流 + 进度/取消），命名模板与同名冲突处理',
+      '4 个内置预设与自定义预设持久化（export_presets 表）',
+    ],
+  },
+  {
+    version: '1.3.5',
+    summary: 'Bug 修复、EXIF 拍摄参数展示与多主题系统',
+    items: [
+      '修复"清除所有筛选"遗漏重置已收藏（starredOnly）条件',
+      '修复筛选选项统计包含导入中（indexing）占位记录的问题',
+      '修复全屏预览 IPC 无并发限制导致主进程阻塞，改为最多 1 个执行中、新请求丢弃旧排队',
+      '修复批量旋转串行等待缩略图生成导致 IPC 超时，改为 Worker Pool 并行非阻塞',
+      '右键菜单新增：批量收藏/取消收藏、全选、反选',
+      '全屏预览侧栏新增拍摄参数区：ISO、光圈（f/X.X）、快门速度、焦距（mm）',
+      'TopBar 操作按钮按功能分组，增加分隔线提升可读性',
+      '照片网格切换/加载时淡入过渡动画',
+      '多界面主题系统：胶片暗室、深夜蓝、暗夜森林、深海、黑曜石，可在"设置—外观"中切换',
+    ],
+  },
   {
     version: '1.3.4',
     summary: 'UI 规范化、卷视图大缩略图重设计与性能/功能增强',
@@ -227,7 +267,7 @@ export default function SettingsModal({ open, onClose, onAttrChange }: SettingsM
   const [editingValueId, setEditingValueId] = useState<number | null>(null)
   const [editingValueName, setEditingValueName] = useState('')
   const [profiles, setProfiles] = useState<IccProfile[]>([])
-  const { setIccProfiles, mergeFilmIconCache } = useStore()
+  const { setIccProfiles, mergeFilmIconCache, appTheme, setAppTheme } = useStore()
 
   // storage tab
   const [libraryRoot, setLibraryRoot] = useState('')
@@ -661,6 +701,50 @@ export default function SettingsModal({ open, onClose, onAttrChange }: SettingsM
                     <span style={{ marginLeft: 16, color: '#666' }}>thumbs/</span><span style={{ color: '#444', marginLeft: 8 }}>— 缩略图缓存</span><br />
                     <span style={{ marginLeft: 16, color: '#666' }}>film.db</span><span style={{ color: '#444', marginLeft: 8 }}>— 数据库</span>
                   </div>
+                </div>
+              </div>
+            )
+          },
+          {
+            key: 'appearance',
+            label: '外观',
+            children: (
+              <div style={{ paddingTop: 8 }}>
+                <div style={{ color: '#888', fontSize: 12, marginBottom: 16 }}>
+                  选择界面配色风格，立即生效。
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {THEMES.map((t) => (
+                    <div
+                      key={t.id}
+                      onClick={() => setAppTheme(t.id)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 14,
+                        padding: '10px 14px', borderRadius: 8, cursor: 'pointer',
+                        border: appTheme === t.id ? `1.5px solid ${t.accent}` : '1.5px solid #252525',
+                        background: appTheme === t.id ? `${t.accent}12` : '#111',
+                        transition: 'border-color 0.15s, background 0.15s'
+                      }}
+                    >
+                      {/* Color swatch */}
+                      <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                        {[t.bgBase, t.bgSurface, t.bgElevated, t.accent].map((c, i) => (
+                          <div key={i} style={{ width: 14, height: 28, borderRadius: 3, background: c, border: '1px solid rgba(255,255,255,0.06)' }} />
+                        ))}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ color: appTheme === t.id ? t.accent : '#ccc', fontSize: 13, fontWeight: appTheme === t.id ? 600 : 400 }}>
+                          {t.label}
+                        </div>
+                        <div style={{ color: '#555', fontSize: 11, marginTop: 2 }}>
+                          {t.bgBase} · {t.accent}
+                        </div>
+                      </div>
+                      {appTheme === t.id && (
+                        <CheckOutlined style={{ color: t.accent, fontSize: 14, flexShrink: 0 }} />
+                      )}
+                    </div>
+                  ))}
                 </div>
               </div>
             )

@@ -18,3 +18,7 @@ thumbs/
 
 # 编译产物
 *.js.map
+*.tsbuildinfo
+
+# 本地参考素材（非应用资源）
+胶片边框/

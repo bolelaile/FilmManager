@@ -242,15 +242,47 @@ async function prepareSharpWin32() {
   }
 }
 
-// ── Step 3: 验证 ─────────────────────────────────────────────
+// ── Step 3: @napi-rs/canvas-win32-x64-msvc ────────────────────
+
+async function prepareNapiCanvasWin32() {
+  console.log('\n[3/4] 准备 @napi-rs/canvas-win32-x64-msvc (Canvas Windows 二进制)...')
+
+  const canvasPkgPath = join(ROOT, 'node_modules', '@napi-rs', 'canvas', 'package.json')
+  if (!existsSync(canvasPkgPath)) {
+    console.error('  错误: 未找到 @napi-rs/canvas，请先运行 npm install')
+    process.exit(1)
+  }
+
+  const canvasVersion = JSON.parse(readFileSync(canvasPkgPath, 'utf-8')).version
+  console.log(`  @napi-rs/canvas@${canvasVersion}`)
+
+  // win32-x64 平台包的 .node 文件
+  const winNode = join(ROOT, 'node_modules/@napi-rs/canvas-win32-x64-msvc/napi-v3.win32-x64-msvc.node')
+  const winPkgJson = join(ROOT, 'node_modules/@napi-rs/canvas-win32-x64-msvc/package.json')
+
+  if (!existsSync(winPkgJson)) {
+    console.log(`  下载 @napi-rs/canvas-win32-x64-msvc@${canvasVersion} (绕过平台限制)...`)
+    await installNpmPkg(`@napi-rs/canvas-win32-x64-msvc`, canvasVersion)
+  }
+
+  if (existsSync(winPkgJson)) {
+    console.log('  ✓ @napi-rs/canvas-win32-x64-msvc 已就绪')
+  } else {
+    console.error('  错误: @napi-rs/canvas-win32-x64-msvc 安装失败')
+    process.exit(1)
+  }
+}
+
+// ── Step 4: 验证 ─────────────────────────────────────────────
 
 function verify() {
-  console.log('\n[3/3] 验证原生模块...')
+  console.log('\n[4/4] 验证原生模块...')
 
   const checks = [
     'node_modules/better-sqlite3/build/Release/better_sqlite3.node',
     'node_modules/@img/sharp-win32-x64/lib/sharp-win32-x64.node',
-    'node_modules/@img/sharp-libvips-win32-x64/package.json'
+    'node_modules/@img/sharp-libvips-win32-x64/package.json',
+    'node_modules/@napi-rs/canvas-win32-x64-msvc/package.json'
   ]
 
   let allOk = true
@@ -277,4 +309,5 @@ console.log('==================================================')
 
 await prepareBetterSqlite3()
 await prepareSharpWin32()
+await prepareNapiCanvasWin32()
 verify()

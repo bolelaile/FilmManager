@@ -1,7 +1,8 @@
-import React from 'react'
+import React, { useEffect } from 'react'
 import { ConfigProvider, theme } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import Library from './pages/Library'
+import { useUIStore, THEMES, applyTheme } from './store/uiSlice'
 import 'antd/dist/reset.css'
 
 // 声明全局 API 类型
@@ -11,64 +12,71 @@ declare global {
   }
 }
 
-const filmTheme = {
-  algorithm: theme.darkAlgorithm,
-  token: {
-    colorPrimary: '#c8832a',
-    colorBgBase: '#141414',
-    colorBgContainer: '#1f1f1f',
-    colorBgElevated: '#2a2a2a',
-    colorBorder: '#2a2a2a',
-    colorBorderSecondary: '#222',
-    borderRadius: 6,
-    fontFamily: '-apple-system, "SF Pro Display", "Helvetica Neue", Arial, sans-serif',
-    colorTextBase: '#e0e0e0',
-    colorTextSecondary: '#888',
-    colorTextDisabled: '#444',
-    colorSuccess: '#52c41a',
-    colorWarning: '#faad14',
-    colorError: '#ff4d4f'
-  },
-  components: {
-    Layout: {
-      bodyBg: '#141414',
-      headerBg: '#1a1a1a',
-      siderBg: '#181818'
+export default function App() {
+  const { appTheme } = useUIStore()
+  const cfg = THEMES.find((t) => t.id === appTheme) ?? THEMES[0]
+
+  // Apply CSS variables on mount and theme change
+  useEffect(() => { applyTheme(cfg) }, [cfg])
+
+  const antTheme = {
+    algorithm: theme.darkAlgorithm,
+    token: {
+      colorPrimary: cfg.accent,
+      colorBgBase: cfg.bgBase,
+      colorBgContainer: cfg.bgElevated,
+      colorBgElevated: cfg.bgElevated,
+      colorBorder: cfg.border,
+      colorBorderSecondary: cfg.border,
+      borderRadius: 6,
+      fontFamily: '-apple-system, "SF Pro Display", "Helvetica Neue", Arial, sans-serif',
+      colorTextBase: cfg.textPrimary,
+      colorTextSecondary: cfg.textSecondary,
+      colorTextDisabled: cfg.textDim,
+      colorSuccess: '#52c41a',
+      colorWarning: '#faad14',
+      colorError: '#ff4d4f'
     },
-    Tree: {
-      colorBgContainer: 'transparent',
-      directoryNodeSelectedBg: '#2a2a2a',
-      nodeSelectedBg: '#2a1a08'
-    },
-    Select: {
-      colorBgContainer: '#222',
-      colorBorder: '#333',
-      optionSelectedBg: '#2a1a08'
-    },
-    Input: {
-      colorBgContainer: '#222',
-      colorBorder: '#333',
-      activeBorderColor: '#c8832a'
-    },
-    Drawer: {
-      colorBgElevated: '#181818'
-    },
-    Modal: {
-      contentBg: '#1a1a1a',
-      headerBg: '#1a1a1a'
-    },
-    Collapse: {
-      headerBg: 'transparent',
-      contentBg: 'transparent',
-      colorBorder: '#252525'
+    components: {
+      Layout: {
+        bodyBg: cfg.bgBase,
+        headerBg: cfg.bgHeader,
+        siderBg: cfg.bgSurface
+      },
+      Tree: {
+        colorBgContainer: 'transparent',
+        directoryNodeSelectedBg: cfg.bgElevated,
+        nodeSelectedBg: cfg.accentDim
+      },
+      Select: {
+        colorBgContainer: cfg.bgSurface,
+        colorBorder: cfg.borderStrong,
+        optionSelectedBg: cfg.accentDim
+      },
+      Input: {
+        colorBgContainer: cfg.bgSurface,
+        colorBorder: cfg.borderStrong,
+        activeBorderColor: cfg.accent
+      },
+      Drawer: {
+        colorBgElevated: cfg.bgSurface
+      },
+      Modal: {
+        contentBg: cfg.bgSurface,
+        headerBg: cfg.bgSurface
+      },
+      Collapse: {
+        headerBg: 'transparent',
+        contentBg: 'transparent',
+        colorBorder: cfg.border
+      }
     }
   }
-}
 
-export default function App() {
   return (
-    <ConfigProvider locale={zhCN} theme={filmTheme}>
+    <ConfigProvider locale={zhCN} theme={antTheme}>
       <Library />
     </ConfigProvider>
   )
 }
+

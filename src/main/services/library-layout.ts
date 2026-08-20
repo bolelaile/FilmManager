@@ -218,8 +218,19 @@ export function movePhotosToSubLibrary(
   return result
 }
 
-export function ensureUniqueFilePath(destination: string, sourcePath?: string): string {
-  if (!fs.existsSync(destination) || (sourcePath && pathsReferToSameLocation(destination, sourcePath))) {
+export function ensureUniqueFilePath(
+  destination: string,
+  sourcePath?: string,
+  claimed?: Set<string>
+): string {
+  // claimed：导入批次内已"认领"但尚未落盘的路径集合，消除并行导入同名文件的 TOCTOU 竞态
+  const isTaken = (p: string): boolean => {
+    if (sourcePath && pathsReferToSameLocation(p, sourcePath)) return false
+    if (fs.existsSync(p)) return true
+    return claimed?.has(pathKey(p)) ?? false
+  }
+
+  if (!isTaken(destination)) {
     return destination
   }
 
@@ -227,7 +238,7 @@ export function ensureUniqueFilePath(destination: string, sourcePath?: string): 
   const base = destination.slice(0, destination.length - extension.length)
   let index = 1
   let candidate = `${base}_${index}${extension}`
-  while (fs.existsSync(candidate) && !(sourcePath && pathsReferToSameLocation(candidate, sourcePath))) {
+  while (isTaken(candidate)) {
     index++
     candidate = `${base}_${index}${extension}`
   }
@@ -506,7 +517,7 @@ function mergeMoveResult(target: FileMoveResult, source: FileMoveResult): void {
   target.failed.push(...source.failed)
 }
 
-function pathKey(value: string): string {
+export function pathKey(value: string): string {
   return process.platform === 'win32' ? value.toLowerCase() : value
 }
 

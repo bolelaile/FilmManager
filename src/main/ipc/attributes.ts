@@ -68,8 +68,8 @@ function buildFilteredPhotoSql(
   let joinIdx = 0
 
   for (const [typeId, valueIds] of Object.entries(filters)) {
-    const tid = Number(typeId)
-    if (tid === excludeTypeId || !valueIds || valueIds.length === 0) continue
+    const tid = parseInt(typeId, 10)
+    if (isNaN(tid) || tid === excludeTypeId || !valueIds || valueIds.length === 0) continue
     const alias = `pa${joinIdx++}`
     sql += ` JOIN photo_attributes ${alias} ON ${alias}.photo_id = p.id`
       + ` AND ${alias}.attribute_type_id = ${tid}`
@@ -391,6 +391,8 @@ interface AttrValue { id: number; attribute_type_id: number; value: string; icon
 
 /** 优先从 userData/film-icons 查找，找不到再去 app resources/film-icons */
 function resolveIconPath(iconKey: string, suffix: string): string | null {
+  // Reject keys containing path separators or dots to prevent directory traversal
+  if (!/^[a-zA-Z0-9_-]+$/.test(iconKey)) return null
   const userPath = path.join(app.getPath('userData'), 'film-icons', `${iconKey}${suffix}.webp`)
   if (fs.existsSync(userPath)) return userPath
   const builtinPath = path.join(app.getAppPath(), 'resources', 'film-icons', `${iconKey}${suffix}.webp`)

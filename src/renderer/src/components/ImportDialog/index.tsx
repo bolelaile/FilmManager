@@ -33,6 +33,7 @@ interface ImportDialogProps {
   open: boolean
   onClose: () => void
   onSuccess: () => void
+  initialPaths?: string[]  // 外部拖拽传入的路径，打开时自动填充
 }
 
 // ── Roll-mode: per-row editable config ───────────────────────────────────────
@@ -49,7 +50,7 @@ interface RowConfig {
 
 // ── Main component ───────────────────────────────────────────────────────────
 
-export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogProps) {
+export default function ImportDialog({ open, onClose, onSuccess, initialPaths }: ImportDialogProps) {
   const { subLibraries, setImportProgress, attrTypes } = useStore()
 
   // ── shared state ──
@@ -132,6 +133,13 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
       rollDragCounter.current = 0
       cleanupRef.current.forEach((fn) => fn())
       cleanupRef.current = []
+    }
+  }, [open])
+
+  // 外部传入的初始路径（如全局拖拽导入），在对话框打开时填充
+  useEffect(() => {
+    if (open && initialPaths && initialPaths.length > 0) {
+      setPendingPaths(initialPaths)
     }
   }, [open])
 
@@ -876,9 +884,9 @@ export default function ImportDialog({ open, onClose, onSuccess }: ImportDialogP
         {step === 'importing' && (
           <div style={{ textAlign: 'center', padding: '12px 0' }}>
             <LoadingOutlined style={{ fontSize: 32, color: '#c8832a', marginBottom: 16 }} />
-            <div style={{ color: '#ccc', marginBottom: 16 }}>正在导入...</div>
+            <div style={{ color: 'var(--text-primary)', marginBottom: 16 }}>正在导入...</div>
             {progress.total > 0 && (
-              <Progress percent={Math.round(((progress.imported + progress.skipped) / progress.total) * 100)} strokeColor="#c8832a" trailColor="#2a2a2a" />
+              <Progress percent={Math.round(((progress.imported + progress.skipped) / progress.total) * 100)} strokeColor="var(--accent)" trailColor="var(--border)" />
             )}
             <div style={{ color: '#666', fontSize: 12, marginTop: 8 }}>
               已导入 {progress.imported} 张 · 跳过 {progress.skipped} 张{progress.total > 0 && ` · 共 ${progress.total} 张`}

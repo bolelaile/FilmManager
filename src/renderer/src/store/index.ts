@@ -4,6 +4,8 @@ import { useLibraryStore } from './librarySlice'
 import { useUIStore } from './uiSlice'
 
 export { useFilterStore, useLibraryStore, useUIStore }
+export type { AppTheme, ThemeConfig } from './uiSlice'
+export { THEMES, applyTheme } from './uiSlice'
 
 /**
  * 向后兼容的组合 hook：现有所有使用 useStore() 的组件无需改动。

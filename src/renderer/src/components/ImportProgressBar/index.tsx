@@ -79,8 +79,8 @@ export default function ImportProgressBar() {
         percent={percent}
         size="small"
         showInfo={false}
-        strokeColor={isFinished ? (imported > 0 ? '#52c41a' : '#555') : '#c8832a'}
-        trailColor="#2a2a2a"
+        strokeColor={isFinished ? (imported > 0 ? '#52c41a' : 'var(--text-dim)') : 'var(--accent)'}
+        trailColor="var(--border)"
         style={{ flex: 1, margin: 0 }}
       />
 

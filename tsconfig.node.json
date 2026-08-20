@@ -9,5 +9,5 @@
     "esModuleInterop": true,
     "composite": true
   },
-  "include": ["src/main/**/*", "src/preload/**/*"]
+  "include": ["src/main/**/*", "src/preload/**/*", "src/shared/**/*"]
 }

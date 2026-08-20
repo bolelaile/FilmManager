@@ -1,4 +1,4 @@
-import { ipcMain, app, dialog, shell } from 'electron'
+import { ipcMain, app, dialog, shell, BrowserWindow } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import { getLibraryRoot, getThumbDir, getProfilesDir } from './index'
@@ -51,7 +51,7 @@ export function registerLibraryIpc(): void {
 
   // 导入自定义 ICC 配置文件
   ipcMain.handle('library:importProfile', async (event) => {
-    const win = require('electron').BrowserWindow.fromWebContents(event.sender)
+    const win = BrowserWindow.fromWebContents(event.sender)
     const result = await dialog.showOpenDialog(win!, {
       filters: [{ name: 'ICC Profile', extensions: ['icc', 'icm'] }],
       properties: ['openFile', 'multiSelections']

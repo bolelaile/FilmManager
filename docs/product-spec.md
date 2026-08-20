@@ -1,6 +1,6 @@
 # FilmManager 产品规格文档
 
-**版本：** 1.3.4
+**版本：** 1.3.7
 **技术栈：** Electron 29 · React 18 · TypeScript 5 · Ant Design 5 · Zustand 4 · better-sqlite3 9 · Sharp 0.33 · Leaflet 1.9 · @tanstack/react-virtual 3 · electron-vite 2
 
 ---
@@ -20,6 +20,7 @@ FilmManager 是一款面向胶片摄影爱好者的本地桌面应用，用于�
 - **RAW 解码**：通过 Sharp/libvips 解码，支持 ICC 色彩配置文件
 - **地点地图**：基于 Leaflet + OpenStreetMap，三源自动轮换；支持地名搜索、手动坐标录入
 - **外部软件联动**：检测已安装图像处理软件并直接传入文件路径打开
+- **带胶片边框导出**：参考 [film-index-generator](https://github.com/Judian99/film-index-generator) 的 Canvas 实现方法，主进程以 `@napi-rs/canvas` 渲染——物理 mm 几何驱动（5.5mm 片基带、4.75mm 齿孔距）、暖色渐变片基 + 齿孔浮雕渐变、Courier New 等宽粗体边字（发光阴影 + 品牌/预设交替 + 帧号 + "A"后缀 + 条码竖条）；边字墨色按胶卷工艺自动匹配（C-41 橙 / 黑白银 / E-6 暖肤 / ECN-2 米黄），内置 Kodak/Fuji/Ilford/Lucky/Cinestill 品牌库；照片 cover 填满帧区（pan/zoom 自定义裁切，始终填满）；导出格式 JPEG / PNG；透明/高斯模糊/纯色背景；支持单张、选中、整卷、当前筛选批量导出（并发限流 + 进度/取消），命名模板与同名冲突处理；内置预设与自定义预设持久化（详见《导出功能优化方案》）
 - **别名系统**：胶片、相机和镜头支持多别名，文件夹解析和 EXIF 识别均按别名匹配
 - **完全离线**：所有数据本地存储，仅地点搜索功能需要网络
 
@@ -44,6 +45,7 @@ FilmManager 是一款面向胶片摄影爱好者的本地桌面应用，用于�
 | `locations` | 地点（含经纬度） |
 | `photo_locations` | 照片—地点关联（多对多） |
 | `color_profiles` | ICC 色彩配置文件 |
+| `export_presets` | 导出预设（名称、是否内置、JSON 配置） |
 
 ---
 
@@ -352,6 +354,7 @@ color_profiles.file_path   → {resources/userData}/profiles/{name}.icc
 | `photos.list(params)` | 分页查询（PAGE_SIZE=80）；支持属性过滤（每种类型一个 JOIN）、子库递归 CTE、日期范围、文件格式、整理状态、搜索、排序；批量查询每页属性 |
 | `photos.get(id)` | 获取单张照片（含完整属性列表） |
 | `photos.filterOptions()` | 返回文件类型计数 + 未分类/缺拍摄日期/缺相机信息的数量 |
+| `photos.timeline(params?)` | 按年月分组统计照片数量；接受完整 filter 参数（filters/subLibraryId/search/fileTypes/organizationStatuses/starredOnly）与 FilterPanel 联动；`dateField` 支持 `'shot_date'`（默认，COALESCE 回退 imported_at）或 `'imported_at'`；`thumbsPerMonth` 控制每月返回缩略图数量（small=1/medium=6/large=30）；白名单校验防止注入 |
 | `photos.setAttributes(photoId, attrs)` | 替换单张照片全部属性（DELETE + INSERT 包裹于同一事务，任一步骤失败整体回滚） |
 | `photos.batchSetAttributes(ids, attrs)` | 批量替换属性（事务，per-type per-photo） |
 | `photos.updateNotes(id, notes)` | 更新备注 |
@@ -654,7 +657,7 @@ Store 按领域拆分为三个独立 slice，同时保留 `useStore()` 向后兼
 |---|---|
 | `thumbnailSize` | `'small' \| 'medium' \| 'large'`（照片视图缩略图尺寸） |
 | `rollThumbnailSize` | `'small' \| 'medium' \| 'large'`（卷视图缩略图尺寸，独立于照片视图） |
-| `viewMode` | `'rolls' \| 'photos'` |
+| `viewMode` | `'rolls' \| 'photos' \| 'timeline'` |
 | `activeRoll` | 当前进入卷内部时的 Roll 对象 |
 | `viewerPhoto / viewerPhotos / viewerIndex` | 全屏预览状态 |
 | `settingsOpen` | 设置弹窗开关 |
@@ -787,14 +790,21 @@ Library.tsx 已从约 530 行的 God Component 拆分为三个自定义 hook，�
 - 统计：属性数量 + 整理状态数量 + 文件格式数量 + 日期范围（1 或 0）+ 子库（1 或 0）
 - 超过 0 时底部显示"清除所有筛选 (N)"
 
+**筛选 Chips（活跃筛选标签）**
+
+- 有任何筛选条件时，面板顶部显示可关闭的 Tag 标签行
+- 每个激活筛选条件对应一个 Tag：子库名称（📁）、日期范围（📅）、已收藏（★）、整理状态（⚠️）、文件格式、属性值
+- 点击 Tag 上的关闭按钮可单独移除对应筛选条件（通过 `setFilter` 写入 `undefined`）
+
 ### 8.6 顶栏（TopBar）
 
 **拖拽区域**：`-webkit-app-region: drag` 覆盖整个 Header，操作按钮区设置 `no-drag`
 **窗口控制**：最小化（#2a2a2a hover）/ 最大化（#2a2a2a hover）/ 关闭（#c0392b hover，图标变白）
-**视图切换**：Segmented（卷 BlockOutlined / 照片 AppstoreOutlined）
+**视图切换**：Segmented（卷 BlockOutlined / 照片 AppstoreOutlined / 时间线 CalendarOutlined）
 **卷内返回**：`viewMode='photos' && activeRoll` 时显示 RollbackOutlined 返回按钮
 **多选建卷**：选中照片且 viewMode!='rolls' 时，Badge 徽标 + BlockOutlined 建卷入口
 **总数显示**：右侧显示当前照片总数（小字，深色）
+**搜索防抖**：搜索输入框维护独立本地 `searchInput` 状态实现即时响应，300ms 防抖后才写入 `filter.search`；外部重置 `filter.search` 时自动同步本地值
 
 ### 8.7 导入对话框（ImportDialog）
 
@@ -860,14 +870,35 @@ Library.tsx 已从约 530 行的 God Component 拆分为三个自定义 hook，�
 - **批量属性编辑**：Modal 中为所有选中卷的全部照片批量设置胶片/相机/镜头等属性（调用 `rolls.batchSetAttributes`）
 - **删除**：三档 Radio 选项——仅删除卷索引 / 同时删除数据库照片 / 同时删除物理文件；linked 模式照片即使选"删除文件"也只删 DB 记录
 
-### 8.9 胶卷库（FilmLibraryModal）
+### 8.9 时间线视图（TimelineView）
+
+- 第三种主视图，通过顶栏 Segmented 切换，`viewMode='timeline'`
+- 调用 `photos:timeline` IPC 获取按年月分组的统计数据，传入完整 filter 参数与 FilterPanel（子库、属性、文件格式、整理状态、搜索、收藏）联动
+- 工具栏：Select 切换日期口径（拍摄日期默认，COALESCE 回退 imported_at / 入库日期）；年份多选（视图内过滤，不写入全局 filter）；月份范围 DatePicker.RangePicker（写入 filter.dateFrom/dateTo 并跳转照片视图）
+- 三档缩略图尺寸联动（与顶栏缩略图尺寸控件绑定）：
+  - **small**：`SmallMonthCard`（120px 宽），展示单张封面图 + 月份名 + 张数，每行 5 张，`thumbsPerMonth=1`
+  - **medium**：`MediumMonthCard`（200px 宽），展示最多 6 张 52×52 缩略图，`thumbsPerMonth=6`
+  - **large**：`LargeMonthRow`（可折叠列表行），折叠状态显示 5 张 72×72 + "+N" 溢出占位，展开后显示全部，月份间有分界线，`thumbsPerMonth=30`
+- 点击月份卡片/月份标题：将 `dateFrom` / `dateTo` 写入 filter 并切换到 `viewMode='photos'`，直接显示该月照片
+- 使用 `loadCounterRef` 单调递增防止并发竞态（filter/dateField/thumbnailSize 变化时旧响应自动丢弃）
+- 切换到卷视图或时间线视图时自动清除 `activeRoll`
+
+### 8.10 全局拖拽导入（Global Drag Import）
+
+- `Layout.Content` 区域监听 `onDragEnter / onDragLeave / onDragOver / onDrop` 事件
+- 使用 `globalDragCounter` ref 计数防止子元素 dragLeave 误触发（只有计数归零才取消高亮状态）
+- 拖入时显示半透明蒙层（`position: absolute; inset: 0; zIndex: 200`）提示"释放以导入照片"
+- Drop 时提取所有文件路径，传入 `ImportDialog` 的 `initialPaths` 并打开导入对话框
+- 关闭对话框时清除 `importInitialPaths`，不影响下一次拖拽
+
+### 8.11 胶卷库（FilmLibraryModal）
 
 - 列出所有胶卷值：图标（40px）+ 名称 + 照片数 + 别名编辑 + 删除
 - 别名展开区：点击 TagsOutlined 切换展开/收起；展开后显示 Tag 列表（可删）+ Input + 添加按钮
 - 新增胶卷：弹出子 Modal，需填名称 + 规格（必填），图标可选；存储格式 `{名称} [{规格}]`
 - 导入 JSON 按钮（底部）：调用 `attrs:importJson`，返回新增/更新/别名数量
 
-### 8.10 相机库 / 镜头库（AttrLibraryModal）
+### 8.12 相机库 / 镜头库（AttrLibraryModal）
 
 通用组件，复用于 camera / lens 等属性类型：
 
@@ -875,7 +906,7 @@ Library.tsx 已从约 530 行的 God Component 拆分为三个自定义 hook，�
 - 底部：`Space.Compact`（Input + 添加按钮），支持 Enter 直接新增
 - 导入 JSON 按钮
 
-### 8.11 地图视图（MapView）
+### 8.13 地图视图（MapView）
 
 **实现**：Leaflet 动态导入（`let L: typeof import('leaflet') | null = null`），避免与 Electron 渲染进程冲突
 
@@ -899,14 +930,14 @@ Library.tsx 已从约 530 行的 God Component 拆分为三个自定义 hook，�
 
 **Modal 兼容**：`afterOpenChange` 回调 + 200ms 定时器双重触发 `map.invalidateSize()`
 
-### 8.12 地点选择器（LocationPicker）
+### 8.14 地点选择器（LocationPicker）
 
 **本地搜索**：启动时加载全部 locations，按 normalize（去空格转小写）对 name + address 模糊匹配，显示前 10 条
 **在线搜索**：用户点击"在 OpenStreetMap 中搜索"→ `locations:search`
 **手动输入**：切换到手动表单（地点名称必填 + 地址可选 + 纬度 + 经度）
 **选中后**：若已存在数据库则直接返回；在线搜索结果则先 `locations:add` 再返回
 
-### 8.13 批量编辑（BatchEditModal）
+### 8.15 批量编辑（BatchEditModal）
 
 多选照片后从右键菜单或顶栏打开：
 
@@ -916,7 +947,7 @@ Library.tsx 已从约 530 行的 God Component 拆分为三个自定义 hook，�
 - search-to-create 内联新增属性值
 - 操作完成后清除选中状态 + 刷新列表
 
-### 8.14 设置页（SettingsModal）
+### 8.16 设置页（SettingsModal）
 
 三个 Tab：
 
@@ -965,6 +996,8 @@ App（ConfigProvider: 深色主题 #141414，primary #c8832a）
     │       └── HoverPreviewPanel（大视图右侧悬停预览）
     ├── RollsView（卷视图，ResizeObserver 自适应列数）
     │   └── RollCard（卡片，封面+信息+操作）
+    ├── TimelineView（时间线视图，按年月分组）
+    │   └── ThumbCell（懒加载缩略图格子）
     ├── PhotoViewer（全屏预览 Modal）
     │   ├── HistogramCanvas（RGB 直方图）
     │   ├── AttrEditor（属性编辑）
@@ -1029,3 +1062,6 @@ App（ConfigProvider: 深色主题 #141414，primary #c8832a）
 | **1.3.2** | **格式识别优化与胶卷分类**：① 修复 6×6 中画幅被误判为半格——比例 ≈ 1.0 先于齿孔检测提前返回；② 新增 `film_size_type` 字段，为所有内置胶卷条目分类（`'135'`/`'120'`/`'both'`），导入时按已标注胶卷类型约束格式匹配范围，135 胶卷仅在半格/135间选择，120 胶卷仅按比例区分中画幅规格；③ 统一所有 fuji→Fuji 命名，为富士品牌写入别名（fuji/富士/fujifilm/富士胶片）；④ 新增 Lucky c400 预设（both）；⑤ 修复 importRolls 未将 filmName 传入 importOptions 导致格式约束失效的问题 |
 | **1.3.3** | **相机画幅属性 + 卷视图三档尺寸 + 框选多选**：① 相机属性新增 `camera_formats`/`camera_default_format` 字段；② 新增 6x9/Xpan 格式预设及 70+ 相机预设；③ 文件夹名称复合解析（相机+时间+胶片+地点+题材）；④ 卷模式导入支持单文件夹模式及存储方式选择；⑤ 卷视图三档独立缩略图尺寸（`rollThumbnailSize`）及框选/右键多选；⑥ `rolls:batchDelete` / `rolls:batchSetAttributes` IPC；⑦ `rolls:list` 新增 `shot_date_min` 字段 |
 | **1.3.4** | **UI 规范化与卷视图大缩略图重设计**：① 大视图改为横向详情行（方案 A）——`LargeRollRow` 组件，行高 220px，左侧 55% 封面图（`objectFit:cover`），右侧 45% 展示卷名/胶片/格式/相机/镜头/地点/拍摄年月，操作按钮位于信息区底部；普通 1 列/宽屏 2 列；② 新增 `OtherPhotosLargeRow` 与大视图同形；③ `RollCard` 精简为纯中视图；④ 全项目 Modal 统一 `borderRadius=8`，footer `padding: 12px 20px`，消除按钮贴边问题 |
+| **1.3.5** | **UX 优化：时间线视图、搜索防抖、筛选 Chips、全局拖拽增强**：① 新增时间线视图（`viewMode='timeline'`）——按年月分组展示照片，支持切换拍摄日期/入库日期口径，月份卡片显示缩略图预览，点击跳转到该月照片列表；② 搜索框添加 300ms 防抖——本地 `searchInput` 状态即时响应输入，防抖后写入 filter store，外部重置时自动同步本地值；③ FilterPanel 顶部新增筛选 Chips——有激活筛选时以可关闭 Tag 形式逐条展示，点击 × 可单独移除对应筛选；④ 全局拖拽导入增强——内容区 `Layout.Content` 监听拖拽事件，拖入文件时显示蒙层提示，放开后自动打开导入对话框并预填文件路径；新增 `photos:timeline` IPC（SQL `strftime('%Y-%m', ...)` 分组，`col` 通过白名单赋值防止注入） |
+| **1.3.6** | **带胶片边框导出功能**（详见《导出功能优化方案》）：边框模板按 `film_format` 自动匹配（135 齿孔条 / 半格竖向齿孔 / Xpan 宽幅齿孔 / 120 背纸文字边 / 大画幅净边+缺角 / 无边框 共 6 类）；边字 token 系统（`{film}``{camera}``{date}``{iso}``{aperture}``{shutter}``{frame_no}` 等，含批量递增帧号）；导出格式 JPEG/PNG/WebP/BMP/TIFF，8/10/12/16-bit 位深，长边像素/倍率/DPI，透明/高斯模糊/纯色背景；单张/选中/整卷/当前筛选批量导出（并发限流 + 进度/取消），命名模板与同名冲突处理；`export_presets` 表 + 4 个内置预设与自定义预设持久化；导入侧 `detectFilmFormat`/`resolveFilmFormat` 抽取为共享模块 `services/film-format.ts` |
+| **1.3.7** | **导出功能 Canvas 重构 + 性能与健壮性优化**：① 导出改为参考 film-index-generator 的 Canvas 方法——主进程 `@napi-rs/canvas` 渲染（`film-frame-renderer.ts`），物理 mm 几何（5.5mm 片基带/4.75mm 齿孔距）、暖色渐变片基 + 齿孔浮雕、Courier 等宽边字 + 发光 + 品牌/预设交替 + 帧号 + "A" + 条码；`stock-presets.ts` 按工艺定墨色（C-41橙/BW白/E-6暖/ECN-2米）+ 胶卷品牌库；照片 cover 填满 + pan/zoom；9 画幅覆盖；画布水平 padding 对称居中；格式精简为 JPEG/PNG；旧预设迁移 `templateId`→`formatId`；`@napi-rs/canvas` 加入 asarUnpack 与 prepare-win-natives 跨平台下载；② 导入并行化——`min(4, CPU-2)` 有界并发 + 异步 `copyFile`；③ 并行同名竞态修复——`ensureUniqueFilePath` `claimed` 集合消除 TOCTOU；④ Worker Pool 错误处理——崩溃批量 reject + 自动重建 + `terminating` 标志；⑤ GPS 缓存——N 次全表扫描降为 1 次；⑥ COUNT 缓存——翻页复用（2s TTL + 变更失效）；⑦ 启动性能——`db_meta.seed_version` 门控昂贵迁移 |

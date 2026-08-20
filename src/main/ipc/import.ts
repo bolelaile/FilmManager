@@ -1,5 +1,6 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron'
 import fs from 'fs'
+import os from 'os'
 import path from 'path'
 import log from 'electron-log'
 import { getDb } from '../db/index'
@@ -9,19 +10,28 @@ import {
   getExifData,
   SUPPORTED_EXTENSIONS,
   getFileType,
-  computeContentHash,
-  detectFilmFormat
+  computeContentHash
 } from '../services/thumbnail'
+import {
+  getPhotoFilmSizeType,
+  getPhotoCameraFormatInfo,
+  resolveFilmFormat,
+  assignFilmFormatAttribute
+} from '../services/film-format'
 import {
   ensureSubLibraryDirectory,
   ensureUniqueFilePath,
-  getOrCreateSubLibrary as getOrCreatePhysicalSubLibrary
+  getOrCreateSubLibrary as getOrCreatePhysicalSubLibrary,
+  pathKey
 } from '../services/library-layout'
 import { getLibraryRoot, getThumbDir } from './index'
 import type { AutoOrganizeMode, ImportOptions } from '../../shared/import-types'
 import { thumbnailPool } from '../workers/worker-pool'
 
 export type { AutoOrganizeMode, ImportOptions }
+
+// 导入并发度：与导出管道一致的 idiom，min(4, cpu-2)
+const IMPORT_CONCURRENCY = Math.max(1, Math.min(4, (os.cpus().length || 4) - 2))
 
 // ── types ────────────────────────────────────────────────────────────────────
 
@@ -457,6 +467,10 @@ export function registerImportIpc(): void {
 
     let globalImported = 0
     let globalSkipped = 0
+    // 跨卷共享地点坐标缓存，避免每张 GPS 照片都全表扫描
+    const locationsCache = loadLocationCoords(db)
+    // 跨卷共享已认领路径集合，消除并行导入同名文件竞态
+    const claimedPaths = new Set<string>()
 
     for (const cfg of configs) {
       const files = walk(cfg.folderPath)
@@ -480,22 +494,29 @@ export function registerImportIpc(): void {
         storageMode: cfg.storageMode ?? 'managed'
       }
 
-      for (const filePath of files) {
-        const photoId = await importFile(filePath, importOptions)
-        if (photoId !== null) {
-          imported++
-          globalImported++
-          importedIds.push(photoId)
-        } else {
-          skipped++
-          globalSkipped++
+      // 卷内文件并发导入（有界并发，复用导出管道 idiom）
+      const fileQueue = [...files]
+      async function rollWorker(): Promise<void> {
+        while (fileQueue.length > 0) {
+          const filePath = fileQueue.shift()
+          if (!filePath) break
+          const photoId = await importFile(filePath, importOptions, locationsCache, claimedPaths)
+          if (photoId !== null) {
+            imported++
+            globalImported++
+            importedIds.push(photoId)
+          } else {
+            skipped++
+            globalSkipped++
+          }
+          event.sender.send('import:progress', {
+            imported: globalImported,
+            skipped: globalSkipped,
+            total: totalFiles
+          })
         }
-        event.sender.send('import:progress', {
-          imported: globalImported,
-          skipped: globalSkipped,
-          total: totalFiles
-        })
       }
+      await Promise.all(Array.from({ length: IMPORT_CONCURRENCY }, () => rollWorker()))
 
       // Apply attributes
       if (importedIds.length > 0 && cfg.attrs.length > 0) {
@@ -647,24 +668,35 @@ async function runTwoPhaseImport(
     }
   })()
 
-  // ── 阶段二：后台逐张处理 ──────────────────────────────────────────────────
+  // ── 阶段二：后台并发处理（有界并发，复用导出管道 idiom） ──────────────────
   let done = 0
   let skipped = allFiles.length - registrations.length // 文件路径已存在而被 IGNORE 的
   const importedIds: number[] = []
+  // 批次内共享地点坐标缓存，避免每张 GPS 照片都全表扫描
+  const locationsCache = loadLocationCoords(db)
+  // 批次内共享已认领路径集合，消除并行导入同名文件竞态
+  const claimedPaths = new Set<string>()
+  const workQueue = [...queueItems]
 
-  for (const { queueId, photoId, sourcePath } of queueItems) {
-    await processQueueItem(queueId, photoId, sourcePath, options)
+  async function importWorker(): Promise<void> {
+    while (workQueue.length > 0) {
+      const item = workQueue.shift()
+      if (!item) break
+      await processQueueItem(item.queueId, item.photoId, item.sourcePath, options, locationsCache, claimedPaths)
 
-    const qRow = db.prepare('SELECT status FROM import_queue WHERE id = ?').get(queueId) as { status: string }
-    if (qRow.status === 'done') {
-      done++
-      importedIds.push(photoId)
-    } else {
-      // skipped（内容重复）或 error
-      skipped++
+      const qRow = db.prepare('SELECT status FROM import_queue WHERE id = ?').get(item.queueId) as { status: string }
+      if (qRow.status === 'done') {
+        done++
+        importedIds.push(item.photoId)
+      } else {
+        // skipped（内容重复）或 error
+        skipped++
+      }
+      event.sender.send('import:progress', { imported: done, skipped, total: allFiles.length })
     }
-    event.sender.send('import:progress', { imported: done, skipped, total: allFiles.length })
   }
+
+  await Promise.all(Array.from({ length: IMPORT_CONCURRENCY }, () => importWorker()))
 
   return { imported: done, skipped, importedIds }
 }
@@ -676,7 +708,9 @@ async function processQueueItem(
   queueId: number,
   photoId: number,
   sourcePath: string,
-  options: ImportOptions
+  options: ImportOptions,
+  locationsCache: LocationCoord[],
+  claimedPaths: Set<string>
 ): Promise<void> {
   const db = getDb()
   const storageMode = options.storageMode ?? 'managed'
@@ -708,8 +742,10 @@ async function processQueueItem(
     if (storageMode === 'managed') {
       targetSubLibraryId = resolveTargetSubLibrary(options, sourcePath, effectiveShotDate, exif.cameraModel, filesRoot)
       const targetDirectory = ensureSubLibraryDirectory(db, filesRoot, targetSubLibraryId)
-      finalPath = ensureUniqueFilePath(path.join(targetDirectory, path.basename(sourcePath)))
-      fs.copyFileSync(sourcePath, finalPath)
+      // 认领路径与 ensureUniqueFilePath 在同一同步 tick 完成（无 await 间隔），消除并行同名竞态
+      finalPath = ensureUniqueFilePath(path.join(targetDirectory, path.basename(sourcePath)), undefined, claimedPaths)
+      claimedPaths.add(pathKey(finalPath))
+      await fs.promises.copyFile(sourcePath, finalPath)
       copiedPath = finalPath
     }
 
@@ -741,13 +777,13 @@ async function processQueueItem(
 
     // EXIF GPS 自动关联地点
     if (exif.gpsLat != null && exif.gpsLng != null) {
-      autoLinkGpsLocation(db, photoId, exif.gpsLat, exif.gpsLng)
+      autoLinkGpsLocation(db, photoId, exif.gpsLat, exif.gpsLng, locationsCache)
     }
 
     db.prepare(`UPDATE import_queue SET status = 'done', done_at = datetime('now','localtime') WHERE id = ?`).run(queueId)
 
     // 缩略图通过 Worker Pool 异步生成（不阻塞进度推送）
-    const thumbDir = getThumbDir()
+    // pool 崩溃时 generate 会 reject（reclaimWorker），需 .catch 兜底以免 unhandled rejection
     thumbnailPool.generate(finalPath, thumbDir).then((thumbPath) => {
       if (!thumbPath) {
         // pool 不可用时回退到主进程内联生成
@@ -756,6 +792,8 @@ async function processQueueItem(
       return thumbPath
     }).then((thumbPath) => {
       if (thumbPath) db.prepare('UPDATE photos SET thumb_path = ?, thumb_ready = 1 WHERE id = ?').run(thumbPath, photoId)
+    }).catch((err) => {
+      log.warn('thumbnail gen failed for photo', photoId, err)
     })
   } catch (err) {
     log.error('Queue item processing failed', sourcePath, err)
@@ -770,7 +808,12 @@ async function processQueueItem(
 }
 
 // 返回新插入的 photo id，若跳过则返回 null（保留旧接口，供 importRolls 使用）
-async function importFile(sourcePath: string, options: ImportOptions): Promise<number | null> {
+async function importFile(
+  sourcePath: string,
+  options: ImportOptions,
+  locationsCache: LocationCoord[],
+  claimedPaths: Set<string>
+): Promise<number | null> {
   const db = getDb()
   const libraryRoot = getLibraryRoot()
   const filesRoot = path.join(libraryRoot, 'files')
@@ -799,8 +842,10 @@ async function importFile(sourcePath: string, options: ImportOptions): Promise<n
     } else {
       targetSubLibraryId = resolveTargetSubLibrary(options, sourcePath, effectiveShotDate, exif.cameraModel, filesRoot)
       const targetDirectory = ensureSubLibraryDirectory(db, filesRoot, targetSubLibraryId)
-      finalDest = ensureUniqueFilePath(path.join(targetDirectory, path.basename(sourcePath)))
-      fs.copyFileSync(sourcePath, finalDest)
+      // 认领路径与 ensureUniqueFilePath 在同一同步 tick 完成（无 await 间隔），消除并行同名竞态
+      finalDest = ensureUniqueFilePath(path.join(targetDirectory, path.basename(sourcePath)), undefined, claimedPaths)
+      claimedPaths.add(pathKey(finalDest))
+      await fs.promises.copyFile(sourcePath, finalDest)
       copiedPath = finalDest
     }
 
@@ -838,7 +883,7 @@ async function importFile(sourcePath: string, options: ImportOptions): Promise<n
 
     // EXIF GPS 自动关联地点
     if (exif.gpsLat != null && exif.gpsLng != null) {
-      autoLinkGpsLocation(db, photoId, exif.gpsLat, exif.gpsLng)
+      autoLinkGpsLocation(db, photoId, exif.gpsLat, exif.gpsLng, locationsCache)
     }
 
     // 后台生成缩略图
@@ -861,18 +906,38 @@ async function importFile(sourcePath: string, options: ImportOptions): Promise<n
   }
 }
 
+interface LocationCoord {
+  id: number
+  lat: number
+  lng: number
+}
+
+/**
+ * 一次性加载所有地点坐标，供导入批次内复用，避免每张 GPS 照片都全表扫描。
+ * 调用方应将同一数组在批次内透传，并在新建地点时 push 进数组。
+ */
+function loadLocationCoords(db: ReturnType<typeof getDb>): LocationCoord[] {
+  return db.prepare('SELECT id, lat, lng FROM locations').all() as LocationCoord[]
+}
+
 /**
  * 将照片与最近的已有地点关联，或自动创建新地点（坐标精确到小数点后3位作为名称）。
  * 若100米范围内已有地点则直接关联，否则新建一个坐标地点。
+ * `cache` 为批次内共享的地点坐标数组：新建地点时 push，使同批次后续照片可见，
+ * 从而保持 100m 聚类关联行为，且无需重复查库。
  */
-function autoLinkGpsLocation(db: ReturnType<typeof getDb>, photoId: number, lat: number, lng: number): void {
+function autoLinkGpsLocation(
+  db: ReturnType<typeof getDb>,
+  photoId: number,
+  lat: number,
+  lng: number,
+  cache: LocationCoord[]
+): void {
   try {
-    // 计算与所有现有地点的近似距离（经纬度差转米，误差可接受）
-    const locations = db.prepare('SELECT id, lat, lng FROM locations').all() as { id: number; lat: number; lng: number }[]
     const THRESHOLD_M = 100
     let bestId: number | null = null
     let bestDist = Infinity
-    for (const loc of locations) {
+    for (const loc of cache) {
       const dlat = (loc.lat - lat) * 111320
       const dlng = (loc.lng - lng) * 111320 * Math.cos(lat * Math.PI / 180)
       const dist = Math.sqrt(dlat * dlat + dlng * dlng)
@@ -890,6 +955,8 @@ function autoLinkGpsLocation(db: ReturnType<typeof getDb>, photoId: number, lat:
         'INSERT INTO locations (name, address, lat, lng) VALUES (?, ?, ?, ?)'
       ).run(name, address, lat, lng)
       locationId = result.lastInsertRowid as number
+      // 写入缓存，使同批次后续临近照片能命中此新地点
+      cache.push({ id: locationId, lat, lng })
     }
 
     db.prepare('INSERT OR IGNORE INTO photo_locations (photo_id, location_id) VALUES (?, ?)').run(photoId, locationId)
@@ -1008,180 +1075,3 @@ function sanitizeSubLibraryName(name: string): string {
   return name.replace(/[\u0000-\u001f]/g, '').trim().slice(0, 100) || '未命名'
 }
 
-/**
- * 查找照片已分配的胶卷属性值的 film_size_type（'135'|'120'|'both'|null）。
- * 若 options 中提供了 filmName，优先按名称从 DB 中找；否则按 photo_attributes 中已存在的记录查。
- */
-function getPhotoFilmSizeType(photoId: number, filmName?: string | null): '135' | '120' | 'both' | null {
-  try {
-    const db = getDb()
-    const filmAttrType = db.prepare("SELECT id FROM attribute_types WHERE key = 'film'").get() as { id: number } | undefined
-    if (!filmAttrType) return null
-
-    let sizeType: string | null = null
-
-    if (filmName) {
-      // 按名称直接查
-      const row = db.prepare(
-        `SELECT film_size_type FROM attribute_values WHERE attribute_type_id = ? AND LOWER(value) = LOWER(?)`
-      ).get(filmAttrType.id, filmName) as { film_size_type: string | null } | undefined
-      sizeType = row?.film_size_type ?? null
-    }
-
-    if (!sizeType) {
-      // 按已关联的 photo_attributes 查
-      const row = db.prepare(`
-        SELECT av.film_size_type FROM photo_attributes pa
-        JOIN attribute_values av ON av.id = pa.attribute_value_id
-        WHERE pa.photo_id = ? AND pa.attribute_type_id = ?
-        LIMIT 1
-      `).get(photoId, filmAttrType.id) as { film_size_type: string | null } | undefined
-      sizeType = row?.film_size_type ?? null
-    }
-
-    if (sizeType === '135' || sizeType === '120' || sizeType === 'both') return sizeType
-    return null
-  } catch {
-    return null
-  }
-}
-
-/**
- * 相机画幅令牌 → film_format 属性值映射
- */
-const CAMERA_FORMAT_TOKEN_MAP: Record<string, string> = {
-  '135':  '135 / 35mm',
-  '半格': '半格 / 17.5mm',
-  '645':  '645 中画幅',
-  '6x6':  '6x6 中画幅',
-  '6x7':  '6x7 中画幅',
-  '6x8':  '6x8 中画幅',
-  '6x9':  '6x9 中画幅',
-  '6x12': '6x12 中画幅',
-  'xpan': '135 宽幅 / Xpan',
-  '4x5':  '4x5 大画幅',
-  '8x10': '8x10 大画幅',
-}
-
-/**
- * 查找相机画幅信息。
- * 返回 { formats: string[](film_format值列表), defaultFormat: string | null } 或 null（未知相机）。
- */
-function getPhotoCameraFormatInfo(
-  photoId: number,
-  cameraName?: string | null
-): { formats: string[]; defaultFormat: string | null } | null {
-  try {
-    const db = getDb()
-    const camAttrType = db.prepare("SELECT id FROM attribute_types WHERE key = 'camera'").get() as { id: number } | undefined
-    if (!camAttrType) return null
-
-    let row: { camera_formats: string | null; camera_default_format: string | null } | undefined
-
-    if (cameraName) {
-      row = db.prepare(
-        `SELECT camera_formats, camera_default_format FROM attribute_values
-         WHERE attribute_type_id = ? AND LOWER(value) = LOWER(?)`
-      ).get(camAttrType.id, cameraName) as typeof row
-    }
-
-    if (!row) {
-      row = db.prepare(`
-        SELECT av.camera_formats, av.camera_default_format FROM photo_attributes pa
-        JOIN attribute_values av ON av.id = pa.attribute_value_id
-        WHERE pa.photo_id = ? AND pa.attribute_type_id = ?
-        LIMIT 1
-      `).get(photoId, camAttrType.id) as typeof row
-    }
-
-    if (!row?.camera_formats) return null
-
-    const tokens = row.camera_formats.split(',').map(t => t.trim()).filter(Boolean)
-    const formats = tokens.map(t => CAMERA_FORMAT_TOKEN_MAP[t]).filter(Boolean)
-    const defaultFormat = row.camera_default_format
-      ? (CAMERA_FORMAT_TOKEN_MAP[row.camera_default_format] ?? null)
-      : null
-
-    return formats.length > 0 ? { formats, defaultFormat } : null
-  } catch {
-    return null
-  }
-}
-
-/**
- * 综合相机画幅信息和胶卷类型约束，确定最终胶片格式。
- * - 相机只有一种画幅：直接返回，无需像素分析
- * - 相机有多种画幅：取与 filmSizeType 相交后调用 detectFilmFormat
- * - 无相机信息：仅用 filmSizeType 约束调用 detectFilmFormat
- */
-async function resolveFilmFormat(
-  filePath: string,
-  width: number,
-  height: number,
-  filmSizeType: '135' | '120' | 'both' | null,
-  cameraInfo: { formats: string[]; defaultFormat: string | null } | null
-): Promise<string | null> {
-  if (cameraInfo) {
-    if (cameraInfo.formats.length === 1) {
-      // 单画幅相机：不需要像素分析
-      return cameraInfo.formats[0]
-    }
-    // 多画幅相机：filmSizeType 与 cameraInfo.formats 取交集
-    if (filmSizeType && filmSizeType !== 'both') {
-      // 把 filmSizeType 转换为对应的 film_format 值集合
-      let filmFormatSet: Set<string>
-      if (filmSizeType === '135') {
-        filmFormatSet = new Set(['135 / 35mm', '半格 / 17.5mm', '135 宽幅 / Xpan'])
-      } else {
-        // '120'
-        filmFormatSet = new Set(['645 中画幅', '6x6 中画幅', '6x7 中画幅', '6x8 中画幅', '6x9 中画幅', '6x12 中画幅', '120 中画幅'])
-      }
-      const intersection = cameraInfo.formats.filter(f => filmFormatSet.has(f))
-      if (intersection.length === 1) return intersection[0]
-      if (intersection.length === 0) {
-        // 无交集（数据矛盾）：降级到默认画幅
-        return cameraInfo.defaultFormat
-      }
-      // 还有多个候选：继续像素分析（传 filmSizeType）
-    }
-    // 多画幅且无法缩减：使用像素分析
-  }
-  return detectFilmFormat(filePath, width, height, filmSizeType)
-}
-
-function assignFilmFormatAttribute(photoId: number, formatValue: string): void {
-  try {
-    const db = getDb()
-    const attrType = db.prepare("SELECT id FROM attribute_types WHERE key = 'film_format'").get() as { id: number } | undefined
-    if (!attrType) return
-
-    // 照片已有该属性则跳过
-    const existing = db.prepare(
-      'SELECT 1 FROM photo_attributes WHERE photo_id = ? AND attribute_type_id = ?'
-    ).get(photoId, attrType.id)
-    if (existing) return
-
-    // 查找或创建对应的 attribute_value
-    let val = db.prepare(
-      'SELECT id FROM attribute_values WHERE attribute_type_id = ? AND value = ?'
-    ).get(attrType.id, formatValue) as { id: number } | undefined
-
-    if (!val) {
-      // 自动检测到的格式值如果不在预设里，就创建一个非预设条目
-      db.prepare(
-        'INSERT OR IGNORE INTO attribute_values (attribute_type_id, value, is_preset) VALUES (?, ?, 0)'
-      ).run(attrType.id, formatValue)
-      val = db.prepare(
-        'SELECT id FROM attribute_values WHERE attribute_type_id = ? AND value = ?'
-      ).get(attrType.id, formatValue) as { id: number } | undefined
-    }
-
-    if (val) {
-      db.prepare(
-        'INSERT OR IGNORE INTO photo_attributes (photo_id, attribute_type_id, attribute_value_id) VALUES (?, ?, ?)'
-      ).run(photoId, attrType.id, val.id)
-    }
-  } catch (err) {
-    log.warn('assignFilmFormatAttribute failed', err)
-  }
-}

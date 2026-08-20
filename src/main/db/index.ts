@@ -20,6 +20,27 @@ export function initDb(libraryRoot: string): void {
   log.info('Database initialized at', dbPath)
 }
 
+/**
+ * 种子数据版本号。仅用于门控昂贵的数据迁移（seedChinaLocations /
+ * migrateFilmSizeTypes / migrateCameraFormats / migrateExportPresets），
+ * 使其在版本匹配时整段跳过，避免每次启动重复执行幂等的全表扫描。
+ *
+ * ⚠️ 重要：当上述任一函数内的种子/预设数据发生变更（新增预设、调整分类、
+ * 修正坐标等）时，必须 bump 此版本号，否则旧库升级时不会重新应用新数据。
+ * 这些函数本身幂等（INSERT OR IGNORE / UPDATE ... WHERE IS NULL），bump 后
+ * 重跑一次即可应用增量并记录新版本。
+ */
+const SEED_VERSION = '1.3.7-canvas'
+
+function getMeta(key: string): string | null {
+  const row = db.prepare('SELECT value FROM db_meta WHERE key = ?').get(key) as { value: string } | undefined
+  return row?.value ?? null
+}
+
+function setMeta(key: string, value: string): void {
+  db.prepare('INSERT INTO db_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value)
+}
+
 function runMigrations(): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS sub_libraries (
@@ -78,6 +99,11 @@ function runMigrations(): void {
       name      TEXT NOT NULL UNIQUE,
       file_path TEXT NOT NULL,
       is_preset INTEGER DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS db_meta (
+      key   TEXT PRIMARY KEY,
+      value TEXT NOT NULL
     );
 
     CREATE INDEX IF NOT EXISTS idx_photos_sub_library ON photos(sub_library_id);
@@ -214,18 +240,29 @@ function runMigrations(): void {
   try { db.exec(`CREATE INDEX IF NOT EXISTS idx_photos_starred ON photos(starred)`) } catch {}
 
   seedDefaultData()
-  // film_size_type 分类、Fuji 名称统一、Lucky c400 新增（依赖 film 属性类型，必须在 seedDefaultData 之后）
-  try { migrateFilmSizeTypes() } catch (err) {
-    log.warn('migrateFilmSizeTypes non-fatal:', err)
-  }
-  // 相机画幅分类（依赖 camera 属性类型，必须在 seedDefaultData 之后）
-  try { migrateCameraFormats() } catch (err) {
-    log.warn('migrateCameraFormats non-fatal:', err)
-  }
-  try {
-    seedChinaLocations()
-  } catch (err) {
-    log.error('seedChinaLocations failed (non-fatal):', err)
+  // 昂贵的数据迁移按种子版本门控：版本匹配则整段跳过，避免每次启动重复执行
+  // 幂等的全表扫描/LIKE 匹配。新增/变更种子数据时须 bump SEED_VERSION。
+  if (getMeta('seed_version') !== SEED_VERSION) {
+    // film_size_type 分类、Fuji 名称统一、Lucky c400 新增（依赖 film 属性类型，必须在 seedDefaultData 之后）
+    try { migrateFilmSizeTypes() } catch (err) {
+      log.warn('migrateFilmSizeTypes non-fatal:', err)
+    }
+    // 相机画幅分类（依赖 camera 属性类型，必须在 seedDefaultData 之后）
+    try { migrateCameraFormats() } catch (err) {
+      log.warn('migrateCameraFormats non-fatal:', err)
+    }
+    try {
+      seedChinaLocations()
+    } catch (err) {
+      log.error('seedChinaLocations failed (non-fatal):', err)
+    }
+    // 导出预设表 + 内置预设
+    try { migrateExportPresets() } catch (err) {
+      log.warn('migrateExportPresets non-fatal:', err)
+    }
+    setMeta('seed_version', SEED_VERSION)
+  } else {
+    log.info('Seed data migrations skipped (seed_version matched)')
   }
 }
 
@@ -1067,4 +1104,112 @@ function seedChinaLocations(): void {
 
   const total = (db.prepare('SELECT COUNT(*) as c FROM locations').get() as { c: number }).c
   log.info('China locations synchronized', { inserted, merged, corrected, total })
+}
+
+/**
+ * 导出预设表 + 内置预设。幂等。
+ */
+function migrateExportPresets(): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS export_presets (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      name       TEXT NOT NULL UNIQUE,
+      is_builtin INTEGER NOT NULL DEFAULT 0,
+      config     TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `)
+
+  // 3 个内置预设（Canvas 渲染，仅 PNG/JPEG）
+  const presets: { name: string; config: string }[] = [
+    {
+      name: '社交分享',
+      config: JSON.stringify({
+        border: { formatId: '135', filmFormatOverride: null },
+        edgeText: { enabled: true, stockId: 'auto', positions: ['top', 'bottom'], content: {}, font: '"Courier New", monospace', fontSizeRatio: 0.86, opacity: 0.92, align: 'center', letterSpacing: 0 },
+        frameNo: { start: 1, step: 1, digits: 2, prefix: '' },
+        image: { format: 'jpeg', quality: 92, longEdge: 2048, scale: null, crop: null },
+        background: { type: 'solid', color: '#0a0a0a', blurSigma: 12, paddingRatio: 0.05 },
+        output: { dir: '', filenameTemplate: '{original}_{frame_no}', overwrite: 'rename' }
+      })
+    },
+    {
+      name: '归档 PNG',
+      config: JSON.stringify({
+        border: { formatId: '135', filmFormatOverride: null },
+        edgeText: { enabled: true, stockId: 'auto', positions: ['top', 'bottom'], content: {}, font: '"Courier New", monospace', fontSizeRatio: 0.86, opacity: 0.92, align: 'center', letterSpacing: 0 },
+        frameNo: { start: 1, step: 1, digits: 2, prefix: '' },
+        image: { format: 'png', quality: 100, longEdge: 4096, scale: null, crop: null },
+        background: { type: 'solid', color: '#0a0a0a', blurSigma: 12, paddingRatio: 0.05 },
+        output: { dir: '', filenameTemplate: '{original}_{frame_no}', overwrite: 'rename' }
+      })
+    },
+    {
+      name: '无边框',
+      config: JSON.stringify({
+        border: { formatId: 'none', filmFormatOverride: null },
+        edgeText: { enabled: false, stockId: 'auto', positions: [], content: {}, font: '"Courier New", monospace', fontSizeRatio: 0.86, opacity: 0.92, align: 'center', letterSpacing: 0 },
+        frameNo: { start: 1, step: 1, digits: 2, prefix: '' },
+        image: { format: 'jpeg', quality: 95, longEdge: 2048, scale: null, crop: null },
+        background: { type: 'solid', color: '#0a0a0a', blurSigma: 12, paddingRatio: 0.05 },
+        output: { dir: '', filenameTemplate: '{original}', overwrite: 'rename' }
+      })
+    }
+  ]
+
+  const ins = db.prepare(
+    'INSERT OR IGNORE INTO export_presets (name, is_builtin, config) VALUES (?, 1, ?)'
+  )
+  for (const p of presets) ins.run(p.name, p.config)
+  // 迁移：旧版预设（templateId/borderColor/colorRule/depth 等）转换为新 schema（formatId）
+  try { migrateLegacyExportPresets(db) } catch (err) {
+    log.warn('migrateLegacyExportPresets non-fatal:', err)
+  }
+  log.info('Export presets migrated')
+}
+
+/**
+ * 将旧版 export_presets.config（SVG 边框 schema：templateId/borderColor/colorRule/depth/dpi）
+ * 转换为新版 Canvas schema（formatId/无 depth/无 colorRule）。
+ * 识别旧版特征字段 templateId，逐行 JSON 改写并写回。
+ */
+function migrateLegacyExportPresets(db: ReturnType<typeof getDb>): void {
+  const rows = db.prepare('SELECT id, config FROM export_presets WHERE config LIKE \'%"templateId"%\'').all() as { id: number; config: string }[]
+  if (rows.length === 0) return
+  const upd = db.prepare('UPDATE export_presets SET config = ?, updated_at = datetime(\'now\') WHERE id = ?')
+  for (const { id, config } of rows) {
+    try {
+      const c = JSON.parse(config)
+      // templateId → formatId
+      const tid = c?.border?.templateId
+      let formatId = '135'
+      if (tid === 'none') formatId = 'none'
+      else if (tid === 'half-frame-sprocket') formatId = 'half'
+      else if (tid === 'xpan-sprocket') formatId = 'xpan'
+      else if (tid === '120-backing') formatId = '66'
+      else if (tid === 'large-format-clean') formatId = 'none'
+      const format = c?.image?.format === 'png' ? 'png' : 'jpeg'
+      const nc = {
+        border: { formatId, filmFormatOverride: c?.border?.filmFormatOverride ?? null },
+        edgeText: {
+          enabled: c?.edgeText?.enabled ?? true,
+          stockId: 'auto',
+          positions: c?.edgeText?.positions ?? ['top', 'bottom'],
+          content: c?.edgeText?.content ?? {},
+          font: '"Courier New", monospace',
+          fontSizeRatio: c?.edgeText?.fontSizeRatio ?? 0.86,
+          opacity: c?.edgeText?.opacity ?? 0.92,
+          align: c?.edgeText?.align ?? 'center',
+          letterSpacing: c?.edgeText?.letterSpacing ?? 0
+        },
+        frameNo: c?.frameNo ?? { start: 1, step: 1, digits: 2, prefix: '' },
+        image: { format, quality: c?.image?.quality ?? 92, longEdge: c?.image?.longEdge ?? 2048, scale: c?.image?.scale ?? null, crop: c?.image?.crop ?? null },
+        background: c?.background ?? { type: 'solid', color: '#0a0a0a', blurSigma: 12, paddingRatio: 0.05 },
+        output: c?.output ?? { dir: '', filenameTemplate: '{original}_{frame_no}', overwrite: 'rename' }
+      }
+      upd.run(JSON.stringify(nc), id)
+    } catch {}
+  }
+  log.info(`migrateLegacyExportPresets: ${rows.length} rows migrated`)
 }

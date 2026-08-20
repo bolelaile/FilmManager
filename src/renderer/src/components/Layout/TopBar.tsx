@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react'
+import React, { useCallback, useRef, useState } from 'react'
 import { Layout, Button, Input, Segmented, Tooltip, Space, Badge } from 'antd'
 import {
   ImportOutlined,
@@ -14,7 +14,8 @@ import {
   CloseOutlined,
   BlockOutlined,
   AppstoreOutlined,
-  RollbackOutlined
+  RollbackOutlined,
+  CalendarOutlined
 } from '@ant-design/icons'
 import { useStore } from '../../store'
 
@@ -38,12 +39,35 @@ export default function TopBar({
 }: TopBarProps) {
   const { filter, setFilter, thumbnailSize, setThumbnailSize, rollThumbnailSize, setRollThumbnailSize, selectedIds, setSettingsOpen, viewMode, setViewMode, activeRoll, setActiveRoll } = useStore()
 
+  // 搜索框本地受控值（立即响应输入），防抖后再同步到 filter store
+  const [searchInput, setSearchInput] = useState(filter.search ?? '')
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // 当外部重置 filter.search（如切换视图、清除筛选）时，同步本地值
+  React.useEffect(() => {
+    if ((filter.search ?? '') !== searchInput) {
+      setSearchInput(filter.search ?? '')
+    }
+  }, [filter.search])
+
   const handleSearchChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      setFilter({ search: e.target.value || undefined })
+      const val = e.target.value
+      setSearchInput(val)
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
+      searchDebounceRef.current = setTimeout(() => {
+        setFilter({ search: val || undefined })
+      }, 300)
     },
     [setFilter]
   )
+
+  // 清空搜索时立即同步
+  const handleSearchClear = useCallback(() => {
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
+    setSearchInput('')
+    setFilter({ search: undefined })
+  }, [setFilter])
 
   // 卷视图（含卷内单独照片页）时用 rollThumbnailSize，其余用 thumbnailSize
   const isRollView = viewMode === 'rolls' || (viewMode === 'photos' && !!activeRoll)
@@ -100,8 +124,8 @@ export default function TopBar({
   return (
     <Header
       style={{
-        background: '#1a1a1a',
-        borderBottom: '1px solid #2a2a2a',
+        background: 'var(--bg-header)',
+        borderBottom: '1px solid var(--border)',
         padding: 0,
         height: 48,
         display: 'flex',
@@ -113,7 +137,7 @@ export default function TopBar({
       }}
     >
       {/* 标题 */}
-      <div style={{ fontWeight: 700, fontSize: 15, color: '#c8832a', letterSpacing: 1, padding: '0 14px 0 16px', flexShrink: 0, WebkitAppRegion: 'drag' }}>
+      <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--accent)', letterSpacing: 1, padding: '0 14px 0 16px', flexShrink: 0, WebkitAppRegion: 'drag' }}>
         FilmManager
       </div>
 
@@ -121,14 +145,30 @@ export default function TopBar({
       <div style={{ flex: 1, WebkitAppRegion: 'drag' }} />
 
       {/* 操作区 */}
-      <Space size={6} style={{ WebkitAppRegion: 'no-drag', padding: '0 6px' }}>
+      <Space size={4} style={{ WebkitAppRegion: 'no-drag', padding: '0 6px' }}>
         <Input
           prefix={<SearchOutlined style={{ color: '#666' }} />}
           placeholder="搜索文件名..."
-          value={filter.search ?? ''}
+          value={searchInput}
           onChange={handleSearchChange}
+          onClear={handleSearchClear}
           allowClear
-          style={{ width: 190, background: '#262626', borderColor: '#333', color: '#fff' }}
+          style={{ width: 190, background: 'var(--bg-elevated)', borderColor: 'var(--border-strong)', color: 'var(--text-primary)' }}
+        />
+
+        {/* 视图模式切换：卷 / 单张 / 时间线 */}
+        <Segmented
+          options={[
+            { value: 'rolls', label: <Tooltip title="卷视图"><BlockOutlined /></Tooltip> },
+            { value: 'photos', label: <Tooltip title="照片视图"><AppstoreOutlined /></Tooltip> },
+            { value: 'timeline', label: <Tooltip title="时间线视图"><CalendarOutlined /></Tooltip> }
+          ]}
+          value={viewMode}
+          onChange={(v) => {
+            setViewMode(v as 'rolls' | 'photos' | 'timeline')
+            if (v === 'rolls' || v === 'timeline') setActiveRoll(null)
+          }}
+          style={{ background: 'var(--bg-elevated)' }}
         />
 
         {/* 卷内视图返回按钮 */}
@@ -137,10 +177,33 @@ export default function TopBar({
             <Button
               icon={<RollbackOutlined />}
               onClick={() => { setActiveRoll(null); setViewMode('rolls') }}
-              style={{ background: '#1f1f1f', borderColor: '#c8832a', color: '#c8832a' }}
+              style={{ background: 'var(--bg-elevated)', borderColor: 'var(--accent)', color: 'var(--accent)' }}
             />
           </Tooltip>
         )}
+
+        {/* 分组分隔线 */}
+        <div style={{ width: 1, height: 20, background: '#2a2a2a', flexShrink: 0, margin: '0 2px' }} />
+
+        {/* 库管理工具组 */}
+        <Tooltip title="新建子库">
+          <Button icon={<FolderAddOutlined />} onClick={onCreateSubLib} style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }} />
+        </Tooltip>
+        <Tooltip title="地点地图">
+          <Button icon={<EnvironmentOutlined />} onClick={onOpenMap} style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }} />
+        </Tooltip>
+        <Tooltip title="胶卷库">
+          <Button icon={<VideoCameraOutlined />} onClick={onOpenFilmLibrary} style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }} />
+        </Tooltip>
+        <Tooltip title="相机库">
+          <Button icon={<CameraOutlined />} onClick={onOpenCameraLibrary} style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }} />
+        </Tooltip>
+        <Tooltip title="镜头库">
+          <Button icon={<AimOutlined />} onClick={onOpenLensLibrary} style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }} />
+        </Tooltip>
+
+        {/* 分组分隔线 */}
+        <div style={{ width: 1, height: 20, background: '#2a2a2a', flexShrink: 0, margin: '0 2px' }} />
 
         {selectedIds.size > 0 && viewMode !== 'rolls' && (
           <Badge count={selectedIds.size} size="small">
@@ -148,75 +211,48 @@ export default function TopBar({
               <Button
                 icon={<BlockOutlined />}
                 onClick={onCreateRoll}
-                style={{ background: '#1f1f1f', borderColor: '#c8832a', color: '#c8832a' }}
+                style={{ background: 'var(--bg-elevated)', borderColor: 'var(--accent)', color: 'var(--accent)' }}
               />
             </Tooltip>
           </Badge>
         )}
 
-        {/* 视图模式切换：卷 / 单张 */}
-        <Segmented
-          options={[
-            { value: 'rolls', label: <Tooltip title="卷视图"><BlockOutlined /></Tooltip> },
-            { value: 'photos', label: <Tooltip title="照片视图"><AppstoreOutlined /></Tooltip> }
-          ]}
-          value={viewMode}
-          onChange={(v) => {
-            setViewMode(v as 'rolls' | 'photos')
-            if (v === 'rolls') setActiveRoll(null)
-          }}
-          style={{ background: '#262626' }}
-        />
-
-        <Tooltip title="新建子库">
-          <Button icon={<FolderAddOutlined />} onClick={onCreateSubLib} style={{ background: '#1f1f1f', borderColor: '#333', color: '#ccc' }} />
-        </Tooltip>
-        <Tooltip title="地点地图">
-          <Button icon={<EnvironmentOutlined />} onClick={onOpenMap} style={{ background: '#1f1f1f', borderColor: '#333', color: '#ccc' }} />
-        </Tooltip>
-        <Tooltip title="胶卷库">
-          <Button icon={<VideoCameraOutlined />} onClick={onOpenFilmLibrary} style={{ background: '#1f1f1f', borderColor: '#333', color: '#ccc' }} />
-        </Tooltip>
-        <Tooltip title="相机库">
-          <Button icon={<CameraOutlined />} onClick={onOpenCameraLibrary} style={{ background: '#1f1f1f', borderColor: '#333', color: '#ccc' }} />
-        </Tooltip>
-        <Tooltip title="镜头库">
-          <Button icon={<AimOutlined />} onClick={onOpenLensLibrary} style={{ background: '#1f1f1f', borderColor: '#333', color: '#ccc' }} />
-        </Tooltip>
-
         <Button
           type="primary"
           icon={<ImportOutlined />}
           onClick={onImport}
-          style={{ background: '#c8832a', borderColor: '#c8832a' }}
+          style={{ background: 'var(--accent)', borderColor: 'var(--accent)' }}
         >
           导入
         </Button>
+
+        {/* 分组分隔线 */}
+        <div style={{ width: 1, height: 20, background: '#2a2a2a', flexShrink: 0, margin: '0 2px' }} />
 
         <Segmented
           options={sizeOptions}
           value={activeSize}
           onChange={(v) => setActiveSize(v as 'small' | 'medium' | 'large')}
-          style={{ background: '#262626' }}
+          style={{ background: 'var(--bg-elevated)' }}
         />
 
         <Tooltip title="设置">
-          <Button icon={<SettingOutlined />} onClick={() => setSettingsOpen(true)} style={{ background: '#1f1f1f', borderColor: '#333', color: '#ccc' }} />
+          <Button icon={<SettingOutlined />} onClick={() => setSettingsOpen(true)} style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }} />
         </Tooltip>
 
-        <span style={{ color: '#555', fontSize: 11, minWidth: 44, textAlign: 'center', WebkitAppRegion: 'drag' }}>
+        <span style={{ color: 'var(--text-dim)', fontSize: 11, minWidth: 44, textAlign: 'center', WebkitAppRegion: 'drag' }}>
           {totalCount} 张
         </span>
       </Space>
 
       {/* 分隔线 */}
-      <div style={{ width: 1, height: 22, background: '#2a2a2a', flexShrink: 0 }} />
+      <div style={{ width: 1, height: 22, background: 'var(--border)', flexShrink: 0 }} />
 
       {/* 窗口控制 */}
       <button
         style={winBtnBase}
         onClick={() => window.api.win.minimize()}
-        onMouseEnter={(e) => { e.currentTarget.style.background = '#2a2a2a'; e.currentTarget.style.color = '#ccc' }}
+        onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-elevated)'; e.currentTarget.style.color = 'var(--text-primary)' }}
         onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#777' }}
         title="最小化"
       >
@@ -225,7 +261,7 @@ export default function TopBar({
       <button
         style={winBtnBase}
         onClick={() => window.api.win.maximize()}
-        onMouseEnter={(e) => { e.currentTarget.style.background = '#2a2a2a'; e.currentTarget.style.color = '#ccc' }}
+        onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-elevated)'; e.currentTarget.style.color = 'var(--text-primary)' }}
         onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#777' }}
         title="最大化 / 还原"
       >

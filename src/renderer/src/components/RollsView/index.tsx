@@ -2,7 +2,7 @@ import React, { useRef, useEffect, useState, useCallback } from 'react'
 import { Spin, Empty, Tooltip, Tag, message, Popover, Modal, Select, Button, Divider, Space, Radio, Input } from 'antd'
 import {
   DeleteOutlined, EditOutlined, EnvironmentOutlined, PictureOutlined,
-  CloseOutlined, AppstoreOutlined
+  CloseOutlined, AppstoreOutlined, DownloadOutlined
 } from '@ant-design/icons'
 import type { Roll, AttributeType, AttributeValue, Location } from '../../types'
 import { FilmIconImg, FilmTag, FilmIconPicker } from '../FilmIcon'
@@ -53,6 +53,7 @@ export default function RollsView({
   onRollClick, onOtherPhotosClick, onRollDeleted, onRollRenamed, onRollLocationChanged
 }: RollsViewProps) {
   const { rollThumbnailSize: size } = useStore()
+  const { openExport } = useStore()
   const containerRef = useRef<HTMLDivElement>(null)
   const [containerWidth, setContainerWidth] = useState(0)
   const [thumbCache, setThumbCache] = useState<Record<number, string>>({})
@@ -473,6 +474,21 @@ export default function RollsView({
             label={ctxCount > 1 ? `批量修改属性（${ctxCount} 个卷）` : '修改属性'}
             onClick={() => { setBatchAttrOpen(true) }}
           />
+          {ctxCount === 1 && (
+            <CtxItem
+              icon={<DownloadOutlined />}
+              label="导出整卷"
+              onClick={async () => {
+                const rollId = contextMenu.rollIds[0]
+                setContextMenu(null)
+                const result = await window.api.rolls.photos(rollId, { page: 1, pageSize: 9999, filters: {}, sortBy: 'shot_date', sortOrder: 'asc' }) as { rows: { id: number }[] }
+                const photoIds = result.rows.map((p) => p.id)
+                if (photoIds.length === 0) { message.warning('该卷没有照片'); return }
+                const roll = rolls.find((r) => r.id === rollId)
+                openExport(photoIds, `整卷：${roll?.name ?? ''}（${photoIds.length} 张）`)
+              }}
+            />
+          )}
           <div style={{ borderTop: '1px solid #2a2a2a', margin: '4px 0' }} />
           <CtxItem
             icon={<DeleteOutlined />}

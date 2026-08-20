@@ -19,9 +19,12 @@ import BatchEditModal from '../components/BatchEditModal'
 import RollsView from '../components/RollsView'
 import CreateRollModal from '../components/CreateRollModal'
 import ImportProgressBar from '../components/ImportProgressBar'
+import TimelineView from '../components/TimelineView'
+import ExportModal from '../components/ExportModal'
+import ExportProgressBar from '../components/ExportProgressBar'
 
 export default function Library() {
-  const { filter, selectedIds, clearSelection } = useFilterStore()
+  const { filter, selectedIds, clearSelection, setFilter } = useFilterStore()
   const { setIccProfiles, subLibraries, importProgress } = useLibraryStore()
   const {
     setViewerPhoto,
@@ -45,6 +48,7 @@ export default function Library() {
 
   // ── 弹窗状态 ─────────────────────────────────────────────────────────────────
   const [importOpen, setImportOpen] = useState(false)
+  const [importInitialPaths, setImportInitialPaths] = useState<string[]>([])
   const [createSubLibOpen, setCreateSubLibOpen] = useState(false)
   const [newSubLibName, setNewSubLibName] = useState('')
   const [mapOpen, setMapOpen] = useState(false)
@@ -71,14 +75,14 @@ export default function Library() {
   useEffect(() => {
     if (viewMode === 'rolls' && !activeRoll) {
       loadRolls()
-    } else {
+    } else if (viewMode !== 'timeline') {
       loadPhotos(true)
     }
     loadValueCounts(filter)
   }, [filter, viewMode, activeRoll, unassignedOnly])
 
   useEffect(() => {
-    if (viewMode === 'rolls') setUnassignedOnly(false)
+    if (viewMode === 'rolls' || viewMode === 'timeline') setUnassignedOnly(false)
   }, [viewMode])
 
   // ── 后台导入进行中：每 3 秒刷新一次图库（将 indexing 占位卡片替换为完成卡片）─────
@@ -105,6 +109,43 @@ export default function Library() {
       }
     }
   }, [!!importProgress])
+
+  // ── 全局拖拽导入 ─────────────────────────────────────────────────────────────
+  const [globalDragOver, setGlobalDragOver] = useState(false)
+  const globalDragCounter = useRef(0)
+
+  const handleGlobalDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    globalDragCounter.current++
+    setGlobalDragOver(true)
+  }, [])
+
+  const handleGlobalDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    globalDragCounter.current--
+    if (globalDragCounter.current <= 0) {
+      globalDragCounter.current = 0
+      setGlobalDragOver(false)
+    }
+  }, [])
+
+  const handleGlobalDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+  }, [])
+
+  const handleGlobalDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    globalDragCounter.current = 0
+    setGlobalDragOver(false)
+    const paths: string[] = []
+    for (const file of Array.from(e.dataTransfer.files)) {
+      paths.push((file as unknown as { path: string }).path)
+    }
+    if (paths.length > 0) {
+      setImportInitialPaths(paths)
+      setImportOpen(true)
+    }
+  }, [])
 
   // ── 事件处理 ─────────────────────────────────────────────────────────────────
   const handleOpenViewer = useCallback((photo: import('../types').Photo, index: number) => {
@@ -178,29 +219,29 @@ export default function Library() {
   const rollBreadcrumb = activeRoll || unassignedOnly ? (
     <div style={{
       padding: '6px 16px',
-      background: '#1a1a1a',
-      borderBottom: '1px solid #252525',
+      background: 'var(--bg-surface)',
+      borderBottom: '1px solid var(--border)',
       display: 'flex',
       alignItems: 'center',
       gap: 8,
       fontSize: 13,
-      color: '#888',
+      color: 'var(--text-secondary)',
       flexShrink: 0
     }}>
       <span
-        style={{ color: '#c8832a', cursor: 'pointer' }}
+        style={{ color: 'var(--accent)', cursor: 'pointer' }}
         onClick={() => { setActiveRoll(null); setUnassignedOnly(false); setViewMode('rolls') }}
       >
         卷视图
       </span>
       <span>/</span>
-      <span style={{ color: '#ccc' }}>{activeRoll?.name ?? '其他图片'}</span>
-      <span style={{ marginLeft: 'auto', color: '#555', fontSize: 11 }}>{total} 张</span>
+      <span style={{ color: 'var(--text-primary)' }}>{activeRoll?.name ?? '其他图片'}</span>
+      <span style={{ marginLeft: 'auto', color: 'var(--text-dim)', fontSize: 11 }}>{total} 张</span>
     </div>
   ) : null
 
   return (
-    <Layout style={{ height: '100vh', background: '#141414', overflow: 'hidden' }}>
+    <Layout style={{ height: '100vh', background: 'var(--bg-base)', overflow: 'hidden' }}>
       <TopBar
         onImport={() => setImportOpen(true)}
         onCreateSubLib={() => setCreateSubLibOpen(true)}
@@ -221,10 +262,43 @@ export default function Library() {
           onSubLibraryDeleted={() => { loadPhotos(true); loadSubLibs() }}
         />
 
-        <Layout.Content style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#141414', position: 'relative' }}>
+        <Layout.Content
+          style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#141414', position: 'relative' }}
+          onDragEnter={handleGlobalDragEnter}
+          onDragLeave={handleGlobalDragLeave}
+          onDragOver={handleGlobalDragOver}
+          onDrop={handleGlobalDrop}
+        >
+          {/* 全局拖拽蒙层 */}
+          {globalDragOver && (
+            <div style={{
+              position: 'absolute', inset: 0, zIndex: 200,
+              background: 'rgba(0,0,0,0.6)',
+              border: '2px dashed var(--accent)',
+              borderRadius: 4,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              pointerEvents: 'none'
+            }}>
+              <div style={{ textAlign: 'center', color: 'var(--accent)' }}>
+                <div style={{ fontSize: 36, marginBottom: 8 }}>📥</div>
+                <div style={{ fontSize: 16, fontWeight: 600 }}>释放以导入照片</div>
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>支持文件和文件夹</div>
+              </div>
+            </div>
+          )}
           {rollBreadcrumb}
 
-          {showRollsView ? (
+          {viewMode === 'timeline' ? (
+            <TimelineView
+              onMonthClick={(year, month) => {
+                const from = `${year}-${month}-01`
+                const lastDay = new Date(parseInt(year, 10), parseInt(month, 10), 0).getDate()
+                const to = `${year}-${month}-${String(lastDay).padStart(2, '0')}`
+                setFilter({ dateFrom: from, dateTo: to, dateField: 'shot_date' })
+                setViewMode('photos')
+              }}
+            />
+          ) : showRollsView ? (
             <RollsView
               rolls={rolls}
               photolessCount={photolessCount}
@@ -270,7 +344,8 @@ export default function Library() {
       {/* 导入对话框 */}
       <ImportDialog
         open={importOpen}
-        onClose={() => setImportOpen(false)}
+        onClose={() => { setImportOpen(false); setImportInitialPaths([]) }}
+        initialPaths={importInitialPaths}
         onSuccess={() => { loadPhotos(true); loadAttrs(); loadSubLibs(); loadRolls() }}
       />
 
@@ -379,6 +454,8 @@ export default function Library() {
         onClose={() => setBatchEditOpen(false)}
         onDone={() => { setBatchEditOpen(false); clearSelection(); loadPhotos(true); loadAttrs(); loadSubLibs() }}
       />
+      <ExportModal />
+      <ExportProgressBar />
     </Layout>
   )
 }

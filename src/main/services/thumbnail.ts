@@ -101,7 +101,7 @@ function decodeBmp(filePath: string): RawPixelData | null {
  * BMP 格式先通过纯 JS 解码器转为原始像素数据，
  * 再回退 nativeImage（兜底），其余格式直接传路径。
  */
-function openSharp(filePath: string): sharp.Sharp {
+export function openSharp(filePath: string): sharp.Sharp {
   const ext = path.extname(filePath).toLowerCase()
   if (ext === '.bmp') {
     const raw = decodeBmp(filePath)
@@ -117,7 +117,7 @@ function openSharp(filePath: string): sharp.Sharp {
 }
 
 /** 从 RAW 文件中提取嵌入的 JPEG 预览 */
-function extractEmbeddedJpeg(rawBuffer: Buffer): Buffer | null {
+export function extractEmbeddedJpeg(rawBuffer: Buffer): Buffer | null {
   // 搜索最大的嵌入 JPEG（从文件末尾向前找 EOI，再找对应 SOI）
   let bestStart = -1
   let bestEnd = -1
@@ -241,6 +241,10 @@ export interface ExifData {
   lensModel: string | null
   gpsLat: number | null
   gpsLng: number | null
+  iso: number | null
+  fNumber: number | null
+  exposureTime: number | null
+  focalLength: number | null
 }
 
 const MAKER_ALIASES: { pattern: RegExp; name: string }[] = [
@@ -266,7 +270,7 @@ const MAKER_ALIASES: { pattern: RegExp; name: string }[] = [
 ]
 
 function emptyExifData(): ExifData {
-  return { shotDate: null, cameraMake: null, cameraModel: null, lensMake: null, lensModel: null, gpsLat: null, gpsLng: null }
+  return { shotDate: null, cameraMake: null, cameraModel: null, lensMake: null, lensModel: null, gpsLat: null, gpsLng: null, iso: null, fNumber: null, exposureTime: null, focalLength: null }
 }
 
 function cleanMetadataText(value: unknown): string | null {
@@ -351,7 +355,12 @@ export function parseExifBuffer(buffer: Buffer): ExifData {
     const gpsLat = parseGpsDms(gps?.GPSLatitude, gps?.GPSLatitudeRef)
     const gpsLng = parseGpsDms(gps?.GPSLongitude, gps?.GPSLongitudeRef)
 
-    return { shotDate, cameraMake, cameraModel, lensMake, lensModel, gpsLat, gpsLng }
+    const iso = typeof photo?.ISOSpeedRatings === 'number' ? photo.ISOSpeedRatings : null
+    const fNumber = typeof photo?.FNumber === 'number' ? photo.FNumber : null
+    const exposureTime = typeof photo?.ExposureTime === 'number' ? photo.ExposureTime : null
+    const focalLength = typeof photo?.FocalLength === 'number' ? photo.FocalLength : null
+
+    return { shotDate, cameraMake, cameraModel, lensMake, lensModel, gpsLat, gpsLng, iso, fNumber, exposureTime, focalLength }
   } catch (err) {
     log.debug('EXIF parse failed', err)
     return emptyExifData()

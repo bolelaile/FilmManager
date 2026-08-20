@@ -1,3 +1,18 @@
+/* ── CSS 变量默认值（胶片暗室主题，JS 会实时覆盖） ─────────────────────── */
+:root {
+  --accent: #c8832a;
+  --accent-dim: rgba(200,131,42,0.10);
+  --bg-base: #141414;
+  --bg-surface: #1a1a1a;
+  --bg-elevated: #222;
+  --bg-header: #1a1a1a;
+  --border: #2a2a2a;
+  --border-strong: #333;
+  --text-primary: #e0e0e0;
+  --text-secondary: #888;
+  --text-dim: #444;
+}
+
 *, *::before, *::after {
   box-sizing: border-box;
 }
@@ -10,8 +25,8 @@ html, body, #root {
 }
 
 body {
-  background: #141414;
-  color: #e0e0e0;
+  background: var(--bg-base);
+  color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
   user-select: none;
 }
@@ -25,11 +40,11 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #333;
+  background: var(--border-strong);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #444;
+  background: var(--text-dim);
 }
 
 /* Ant Design 暗色覆盖 */
@@ -37,17 +52,17 @@ body {
 .ant-tree .ant-tree-node-content-wrapper:hover { background: rgba(255,255,255,0.04) !important; }
 .ant-collapse-header { padding: 8px 12px !important; }
 .ant-collapse-content-box { padding: 4px 12px 12px !important; }
-.ant-select-dropdown { background: #222 !important; border: 1px solid #333 !important; }
-.ant-select-item-option-active { background: #2a1a08 !important; }
-.ant-select-item-option-selected { background: #2a1a08 !important; }
+.ant-select-dropdown { background: var(--bg-elevated) !important; border: 1px solid var(--border-strong) !important; }
+.ant-select-item-option-active { background: var(--accent-dim) !important; }
+.ant-select-item-option-selected { background: var(--accent-dim) !important; }
 .ant-modal-content { padding: 0 !important; overflow: hidden; }
 .ant-modal-header { padding: 14px 20px !important; }
 .ant-modal-body { padding: 16px 20px 20px !important; }
-.ant-segmented-item-selected { background: #c8832a !important; color: #fff !important; }
+.ant-segmented-item-selected { background: var(--accent) !important; color: #fff !important; }
 
 /* 图片网格项悬停效果 */
 .photo-card:hover > div:first-child {
-  border-color: rgba(200, 131, 42, 0.5) !important;
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent) !important;
 }
 
 /* 星标按钮：悬浮时显示 */
@@ -56,15 +71,14 @@ body {
 }
 
 /* 地点搜索结果悬停 */
-.location-result-item:hover { background: #222 !important; }
+.location-result-item:hover { background: var(--bg-elevated) !important; }
 
 /* Leaflet 地图暗色修正 */
-.leaflet-container { background: #1a1a1a !important; font-family: inherit; }
-.leaflet-control-attribution { background: rgba(20,20,20,0.8) !important; color: #555 !important; }
-.leaflet-control-attribution a { color: #666 !important; }
-.leaflet-bar a { background: #222 !important; color: #ccc !important; border-color: #333 !important; }
-.leaflet-bar a:hover { background: #2a2a2a !important; }
-
+.leaflet-container { background: var(--bg-surface) !important; font-family: inherit; }
+.leaflet-control-attribution { background: rgba(0,0,0,0.6) !important; color: var(--text-secondary) !important; }
+.leaflet-control-attribution a { color: var(--text-secondary) !important; }
+.leaflet-bar a { background: var(--bg-elevated) !important; color: var(--text-primary) !important; border-color: var(--border-strong) !important; }
+.leaflet-bar a:hover { background: var(--bg-surface) !important; }
 
 /* 导入占位卡片 shimmer 动画 */
 @keyframes shimmer {

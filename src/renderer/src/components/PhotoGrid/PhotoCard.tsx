@@ -57,13 +57,13 @@ function SmallCard({
         className="photo-card"
         style={{
           flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 10,
-          background: '#181818', border: '1px solid #1e1e1e', borderRadius: 6,
+          background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 6,
           padding: '5px 10px 5px 5px', boxSizing: 'border-box', cursor: 'default'
         }}
       >
         <div style={{
           width: size, height: size, flexShrink: 0, borderRadius: 4,
-          background: 'linear-gradient(90deg,#1e1e1e 25%,#252525 50%,#1e1e1e 75%)',
+          background: 'linear-gradient(90deg, var(--bg-elevated) 25%, var(--border) 50%, var(--bg-elevated) 75%)',
           backgroundSize: '200% 100%', animation: 'shimmer 1.4s infinite',
           display: 'flex', alignItems: 'center', justifyContent: 'center'
         }}>
@@ -89,8 +89,8 @@ function SmallCard({
         alignItems: 'center',
         gap: 10,
         cursor: 'pointer',
-        background: selected ? 'rgba(200,131,42,0.08)' : '#181818',
-        border: selected ? '1px solid #c8832a' : '1px solid #232323',
+        background: selected ? 'var(--accent-dim)' : 'var(--bg-surface)',
+        border: selected ? '1px solid var(--accent)' : '1px solid var(--border)',
         borderRadius: 6,
         padding: '5px 10px 5px 5px',
         transition: 'border-color 0.15s, background 0.15s',
@@ -104,7 +104,7 @@ function SmallCard({
       {/* 缩略图 */}
       <div style={{
         width: size, height: size, flexShrink: 0,
-        borderRadius: 4, overflow: 'hidden', background: '#111',
+        borderRadius: 4, overflow: 'hidden', background: 'var(--bg-base)',
         position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center'
       }}>
         {thumbUrl ? (
@@ -131,7 +131,7 @@ function SmallCard({
         {selected && (
           <CheckCircleFilled style={{
             position: 'absolute', top: 2, right: 2,
-            color: '#c8832a', fontSize: 14,
+            color: 'var(--accent)', fontSize: 14,
             filter: 'drop-shadow(0 0 2px rgba(0,0,0,0.8))'
           }} />
         )}
@@ -142,7 +142,7 @@ function SmallCard({
         {/* 文件名行 */}
         <Tooltip title={photo.original_name}>
           <div style={{
-            color: '#ddd', fontSize: 12, fontWeight: 500,
+            color: 'var(--text-primary)', fontSize: 12, fontWeight: 500,
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             marginBottom: 4
           }}>
@@ -160,7 +160,7 @@ function SmallCard({
                 <span style={{ color: '#777', fontSize: 11, flexShrink: 0 }}>{t.display_name}:</span>
                 {isFilm && iconKey && <FilmIconImg iconKey={iconKey} size={11} />}
                 <span style={{
-                  color: attr ? '#bbb' : '#555',
+                  color: attr ? 'var(--text-secondary)' : 'var(--text-dim)',
                   fontSize: 11, fontStyle: attr ? 'normal' : 'italic',
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                   maxWidth: 160
@@ -226,8 +226,8 @@ function TileCard({
     >
       <div style={{
         width: size, height: size,
-        background: '#1e1e1e', borderRadius: 6, overflow: 'hidden',
-        border: selected ? '2px solid #c8832a' : '2px solid transparent',
+        background: 'var(--bg-elevated)', borderRadius: 6, overflow: 'hidden',
+        border: selected ? '2px solid var(--accent)' : '2px solid transparent',
         transition: 'border-color 0.15s',
         position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center'
       }}>
@@ -258,7 +258,7 @@ function TileCard({
         {selected && (
           <CheckCircleFilled style={{
             position: 'absolute', top: 4, right: 4,
-            color: '#c8832a', fontSize: 18,
+            color: 'var(--accent)', fontSize: 18,
             filter: 'drop-shadow(0 0 2px rgba(0,0,0,0.8))'
           }} />
         )}
@@ -274,14 +274,13 @@ function TileCard({
           }}
           onClick={async (e) => {
             e.stopPropagation()
-            await window.api.photos.toggleStar(photo.id)
-            // 触发父层重新加载：通过自定义事件通知
-            window.dispatchEvent(new CustomEvent('photo-star-changed', { detail: { id: photo.id } }))
+            const newStarred = await window.api.photos.toggleStar(photo.id) as boolean
+            window.dispatchEvent(new CustomEvent('photo-star-changed', { detail: { id: photo.id, starred: newStarred ? 1 : 0 } }))
           }}
         >
           <StarFilled style={{
             fontSize: 14,
-            color: photo.starred ? '#c8832a' : '#aaa',
+            color: photo.starred ? 'var(--accent)' : 'var(--text-secondary)',
             filter: 'drop-shadow(0 0 2px rgba(0,0,0,0.8))'
           }} />
         </button>
@@ -290,7 +289,7 @@ function TileCard({
       <div style={{ padding: '4px 2px 0', height: infoBarHeight, overflow: 'hidden' }}>
         <Tooltip title={photo.original_name}>
           <div style={{
-            color: '#ccc', fontSize,
+            color: 'var(--text-primary)', fontSize,
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             lineHeight: '18px'
           }}>
@@ -299,7 +298,7 @@ function TileCard({
         </Tooltip>
         {infoBarHeight >= 44 && (
           <div style={{
-            color: '#666', fontSize: fontSize - 1, lineHeight: '16px',
+            color: 'var(--text-secondary)', fontSize: fontSize - 1, lineHeight: '16px',
             display: 'flex', alignItems: 'center', gap: 4, overflow: 'hidden'
           }}>
             {cameraAttr && (
@@ -308,7 +307,7 @@ function TileCard({
               </span>
             )}
             {filmAttr && (
-              <span style={{ color: '#8B7355', display: 'inline-flex', alignItems: 'center', gap: 3, overflow: 'hidden' }}>
+              <span style={{ color: 'var(--text-secondary)', display: 'inline-flex', alignItems: 'center', gap: 3, overflow: 'hidden' }}>
                 {(filmAttr as any).icon_key && (
                   <FilmIconImg iconKey={(filmAttr as any).icon_key} size={12} />
                 )}

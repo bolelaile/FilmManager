@@ -1,7 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { AutoOrganizeMode, ImportOptions } from '../shared/import-types'
+import type { ExportConfig, ExportPreset, BorderMatchResult } from '../shared/export-types'
 
-export type { AutoOrganizeMode, ImportOptions }
+export type { AutoOrganizeMode, ImportOptions, ExportConfig, ExportPreset, BorderMatchResult }
 
 const api = {
   // 照片
@@ -21,7 +22,18 @@ const api = {
     setRotation: (id: number, rotation: number) => ipcRenderer.invoke('photos:setRotation', id, rotation),
     batchRotate: (ids: number[], delta?: number) => ipcRenderer.invoke('photos:batchRotate', ids, delta),
     toggleStar: (id: number) => ipcRenderer.invoke('photos:toggleStar', id),
-    batchStar: (ids: number[], starred: boolean) => ipcRenderer.invoke('photos:batchStar', ids, starred)
+    batchStar: (ids: number[], starred: boolean) => ipcRenderer.invoke('photos:batchStar', ids, starred),
+    exif: (id: number) => ipcRenderer.invoke('photos:exif', id),
+    timeline: (params?: {
+      dateField?: 'imported_at' | 'shot_date'
+      filters?: Record<number, number[]>
+      subLibraryId?: number
+      search?: string
+      fileTypes?: string[]
+      organizationStatuses?: string[]
+      starredOnly?: boolean
+      thumbsPerMonth?: number
+    }) => ipcRenderer.invoke('photos:timeline', params)
   },
   // 导入
   import: {
@@ -134,6 +146,30 @@ const api = {
     removePhotos: (rollId: number, photoIds: number[]) => ipcRenderer.invoke('rolls:removePhotos', rollId, photoIds),
     addPhotos: (rollId: number, photoIds: number[]) => ipcRenderer.invoke('rolls:addPhotos', rollId, photoIds),
     setCover: (rollId: number, photoId: number) => ipcRenderer.invoke('rolls:setCover', rollId, photoId)
+  },
+  // 导出
+  export: {
+    matchBorder: (photoId: number) => ipcRenderer.invoke('export:matchBorder', photoId),
+    preview: (photoId: number, config: ExportConfig) => ipcRenderer.invoke('export:preview', photoId, config),
+    render: (photoId: number, config: ExportConfig) => ipcRenderer.invoke('export:render', photoId, config),
+    batch: (photoIds: number[], config: ExportConfig) => ipcRenderer.invoke('export:batch', photoIds, config),
+    cancel: () => ipcRenderer.invoke('export:cancel'),
+    pickDir: () => ipcRenderer.invoke('export:pickDir'),
+    defaultConfig: () => ipcRenderer.invoke('export:defaultConfig'),
+    listFonts: () => ipcRenderer.invoke('export:listFonts'),
+    presets: {
+      list: () => ipcRenderer.invoke('export:presets:list'),
+      save: (name: string, config: ExportConfig) => ipcRenderer.invoke('export:presets:save', name, config),
+      delete: (id: number) => ipcRenderer.invoke('export:presets:delete', id)
+    },
+    onProgress: (cb: (d: { done: number; total: number; success: number; failed: number; photoId: number }) => void) => {
+      ipcRenderer.on('export:progress', (_, d) => cb(d))
+      return () => ipcRenderer.removeAllListeners('export:progress')
+    },
+    onDone: (cb: (d: { total: number; success: number; failed: number; cancelled: boolean }) => void) => {
+      ipcRenderer.on('export:done', (_, d) => cb(d))
+      return () => ipcRenderer.removeAllListeners('export:done')
+    }
   }
 }
 

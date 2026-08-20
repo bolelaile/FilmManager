@@ -5,13 +5,17 @@ import {
   AppstoreOutlined,
   CopyOutlined,
   DeleteOutlined,
+  DownloadOutlined,
   EditOutlined,
   FileImageOutlined,
   FolderOpenOutlined,
   FolderOutlined,
   LoadingOutlined,
   RightOutlined,
-  RotateRightOutlined
+  RotateRightOutlined,
+  StarFilled,
+  StarOutlined,
+  SwapOutlined
 } from '@ant-design/icons'
 import type { Photo, AttributeType } from '../../types'
 import PhotoCard from './PhotoCard'
@@ -59,7 +63,19 @@ export default function PhotoGrid({
 }: PhotoGridProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const { thumbnailSize, selectedIds, toggleSelect, selectAll, clearSelection } = useStore()
+  const { openExport } = useStore()
   const [containerWidth, setContainerWidth] = useState(0)
+  // 本地 photos 副本，用于响应 photo-star-changed 事件的即时更新
+  const [localPhotos, setLocalPhotos] = useState<Photo[]>(photos)
+  useEffect(() => { setLocalPhotos(photos) }, [photos])
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { id, starred } = (e as CustomEvent).detail as { id: number; starred: number }
+      setLocalPhotos((prev) => prev.map((p) => p.id === id ? { ...p, starred } : p))
+    }
+    window.addEventListener('photo-star-changed', handler)
+    return () => window.removeEventListener('photo-star-changed', handler)
+  }, [])
 
   const isSmall = thumbnailSize === 'small'
 
@@ -81,7 +97,7 @@ export default function PhotoGrid({
   const infoBar  = INFO_BAR[thumbnailSize]
   const rowGap   = ROW_GAP[thumbnailSize]
   const rowHeight = isSmall ? SMALL_ROW : cardWidth + infoBar + rowGap
-  const rowCount  = Math.ceil(photos.length / cols)
+  const rowCount  = Math.ceil(localPhotos.length / cols)
 
   // Box-selection refs
   const dragStartClientRef  = useRef<{ x: number; y: number } | null>(null)
@@ -214,7 +230,7 @@ export default function PhotoGrid({
     const selH = Math.abs(endContent.y - start.y)
 
     const selected: number[] = []
-    photos.forEach((photo, i) => {
+    localPhotos.forEach((photo, i) => {
       const col = i % cols
       const row = Math.floor(i / cols)
       if (isSmall) {
@@ -283,7 +299,7 @@ export default function PhotoGrid({
     const targetIds = contextMenu.targetIds
     // 统计其中 managed（可实际删除文件）的数量
     const managedCount = targetIds.filter((id) => {
-      const p = photos.find((ph) => ph.id === id)
+      const p = localPhotos.find((ph) => ph.id === id)
       return p && p.storage_mode !== 'linked'
     }).length
     setContextMenu(null)
@@ -318,6 +334,31 @@ export default function PhotoGrid({
     setContextMenu(null)
     onMoveToSubLibrary()
   }
+  const handleExport = () => {
+    if (!contextMenu) return
+    const ids = contextMenu.targetIds
+    setContextMenu(null)
+    openExport(ids, ids.length > 1 ? `选中 ${ids.length} 张` : '当前照片')
+  }
+  const handleBatchStar = async (starred: boolean) => {
+    if (!contextMenu) return
+    const ids = contextMenu.targetIds
+    setContextMenu(null)
+    await window.api.photos.batchStar(ids, starred)
+    const newVal = starred ? 1 : 0
+    setLocalPhotos((prev) => prev.map((p) => ids.includes(p.id) ? { ...p, starred: newVal } : p))
+    ids.forEach((id) => window.dispatchEvent(new CustomEvent('photo-star-changed', { detail: { id, starred: newVal } })))
+    message.success(starred ? `已收藏 ${ids.length} 张照片` : `已取消收藏 ${ids.length} 张照片`)
+  }
+  const handleSelectAll = () => {
+    setContextMenu(null)
+    selectAll(localPhotos.map((p) => p.id))
+  }
+  const handleInvertSelection = () => {
+    setContextMenu(null)
+    const invertedIds = localPhotos.filter((p) => !selectedIds.has(p.id)).map((p) => p.id)
+    selectAll(invertedIds)
+  }
 
   const handleOpenWithHover = async () => {
     setOpenWithSubmenuVisible(true)
@@ -333,7 +374,7 @@ export default function PhotoGrid({
 
   const handleOpenWithApp = async (exePath: string) => {
     if (!contextMenu) return
-    const filePaths = photos
+    const filePaths = localPhotos
       .filter((p) => contextMenu.targetIds.includes(p.id))
       .map((p) => p.file_path)
     setContextMenu(null)
@@ -342,7 +383,7 @@ export default function PhotoGrid({
     if (!ok) message.error('无法打开该应用，请确认程序路径正确')
   }
 
-  if (!loading && photos.length === 0) {
+  if (!loading && localPhotos.length === 0) {
     return (
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <Empty description={<span style={{ color: '#555' }}>暂无照片，点击"导入照片"开始</span>} />
@@ -359,7 +400,7 @@ export default function PhotoGrid({
     <div style={{ flex: 1, minWidth: 0, position: 'relative', overflow: 'hidden' }}>
       <div
         ref={containerRef}
-        style={{ width: '100%', height: '100%', overflow: 'auto', userSelect: 'none' }}
+        style={{ width: '100%', height: '100%', overflow: 'auto', userSelect: 'none', opacity: loading ? 0.4 : 1, transition: 'opacity 0.2s ease' }}
         onClick={(e) => {
           if (justDraggedRef.current) { justDraggedRef.current = false; return }
           if ((e.target as HTMLElement).closest('.photo-card') === null) clearSelection()
@@ -377,7 +418,7 @@ export default function PhotoGrid({
         <div style={{ height: rowVirtualizer.getTotalSize(), width: '100%', position: 'relative' }}>
           {rowVirtualizer.getVirtualItems().map((virtualRow) => {
             const startIdx = virtualRow.index * cols
-            const rowPhotos = photos.slice(startIdx, startIdx + cols)
+            const rowPhotos = localPhotos.slice(startIdx, startIdx + cols)
             return (
               <div
                 key={virtualRow.key}
@@ -427,8 +468,8 @@ export default function PhotoGrid({
           position: 'fixed',
           left: selBox.left, top: selBox.top,
           width: selBox.width, height: selBox.height,
-          border: '1px solid #c8832a',
-          background: 'rgba(200,131,42,0.08)',
+          border: '1px solid var(--accent)',
+          background: 'var(--accent-dim)',
           pointerEvents: 'none', zIndex: 500
         }} />
       )}
@@ -437,7 +478,7 @@ export default function PhotoGrid({
         <div
           style={{
             position: 'fixed', left: menuX, top: menuY,
-            background: '#1e1e1e', border: '1px solid #2e2e2e',
+            background: 'var(--bg-elevated)', border: '1px solid var(--border-strong)',
             borderRadius: 6, boxShadow: '0 4px 20px rgba(0,0,0,0.65)',
             zIndex: 2000, overflow: 'visible', minWidth: 188, padding: '4px 0'
           }}
@@ -464,8 +505,8 @@ export default function PhotoGrid({
                 top: 0,
                 left: '100%',
                 marginLeft: 2,
-                background: '#1e1e1e',
-                border: '1px solid #2e2e2e',
+                background: 'var(--bg-elevated)',
+                border: '1px solid var(--border-strong)',
                 borderRadius: 6,
                 boxShadow: '0 4px 20px rgba(0,0,0,0.65)',
                 minWidth: 180,
@@ -475,7 +516,7 @@ export default function PhotoGrid({
                 zIndex: 2001
               }}>
                 {openWithLoading && (
-                  <div style={{ padding: '8px 12px', color: '#666', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <div style={{ padding: '8px 12px', color: 'var(--text-secondary)', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
                     <LoadingOutlined /> 检测已安装应用…
                   </div>
                 )}
@@ -495,7 +536,7 @@ export default function PhotoGrid({
               </div>
             )}
           </div>
-          <div style={{ borderTop: '1px solid #2a2a2a', margin: '4px 0' }} />
+          <div style={{ borderTop: '1px solid var(--border)', margin: '4px 0' }} />
           <CtxItem
             icon={<EditOutlined />}
             label={contextTargetCount > 1 ? `批量编辑属性（${contextTargetCount} 张）` : '编辑属性'}
@@ -511,7 +552,34 @@ export default function PhotoGrid({
             label={contextTargetCount > 1 ? `批量移动到子库（${contextTargetCount} 张）` : '移动到子库'}
             onClick={handleMoveToSubLibrary}
           />
-          <div style={{ borderTop: '1px solid #2a2a2a', margin: '4px 0' }} />
+          <CtxItem
+            icon={<DownloadOutlined />}
+            label={contextTargetCount > 1 ? `导出（${contextTargetCount} 张）` : '导出'}
+            onClick={handleExport}
+          />
+          {/* 收藏操作 */}
+          {contextMenu.targetIds.some((id) => !localPhotos.find((p) => p.id === id)?.starred) && (
+            <CtxItem
+              icon={<StarFilled style={{ color: '#c8832a' }} />}
+              label={contextTargetCount > 1 ? `收藏（${contextTargetCount} 张）` : '加入收藏'}
+              onClick={() => handleBatchStar(true)}
+            />
+          )}
+          {contextMenu.targetIds.some((id) => localPhotos.find((p) => p.id === id)?.starred) && (
+            <CtxItem
+              icon={<StarOutlined />}
+              label={contextTargetCount > 1 ? `取消收藏（${contextTargetCount} 张）` : '取消收藏'}
+              onClick={() => handleBatchStar(false)}
+            />
+          )}
+          <div style={{ borderTop: '1px solid var(--border)', margin: '4px 0' }} />
+          <CtxItem icon={<AppstoreOutlined />} label="全选" onClick={handleSelectAll} />
+          <CtxItem
+            icon={<SwapOutlined />}
+            label="反选"
+            onClick={handleInvertSelection}
+          />
+          <div style={{ borderTop: '1px solid var(--border)', margin: '4px 0' }} />
           <CtxItem
             icon={<DeleteOutlined />}
             label={contextTargetCount > 1 ? `从库中移除（${contextTargetCount} 张）` : '从库中移除'}
@@ -519,7 +587,7 @@ export default function PhotoGrid({
             danger
           />
           {contextMenu.targetIds.some((id) => {
-            const p = photos.find((ph) => ph.id === id)
+            const p = localPhotos.find((ph) => ph.id === id)
             return p && p.storage_mode !== 'linked'
           }) && (
             <CtxItem
@@ -563,8 +631,8 @@ function formatFileSize(bytes?: number): string {
 function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div style={{ display: 'flex', gap: 6, marginBottom: 5, lineHeight: '16px' }}>
-      <span style={{ color: '#666', fontSize: 11, flexShrink: 0, width: 64, textAlign: 'right' }}>{label}</span>
-      <span style={{ color: '#bbb', fontSize: 11, flex: 1, minWidth: 0, overflowWrap: 'break-word' }}>{value}</span>
+      <span style={{ color: 'var(--text-secondary)', fontSize: 11, flexShrink: 0, width: 64, textAlign: 'right' }}>{label}</span>
+      <span style={{ color: 'var(--text-primary)', fontSize: 11, flex: 1, minWidth: 0, overflowWrap: 'break-word' }}>{value}</span>
     </div>
   )
 }
@@ -581,12 +649,12 @@ function HoverPreviewPanel({
   return (
     <div style={{
       width: PANEL_WIDTH, flexShrink: 0, display: 'flex', flexDirection: 'column',
-      background: '#141414', borderLeft: '1px solid #222', overflow: 'hidden'
+      background: 'var(--bg-base)', borderLeft: '1px solid var(--border)', overflow: 'hidden'
     }}>
       {/* 预览图区域：宽度100%，高度自适应（正方形），顶部留出间距 */}
       <div style={{
         width: '100%', aspectRatio: '1 / 1', flexShrink: 0,
-        background: '#0e0e0e',
+        background: 'var(--bg-surface)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         padding: 12, boxSizing: 'border-box'
       }}>
@@ -597,12 +665,12 @@ function HoverPreviewPanel({
             style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', display: 'block' }}
           />
         ) : photo ? (
-          <div style={{ textAlign: 'center', color: '#333' }}>
+          <div style={{ textAlign: 'center', color: 'var(--text-dim)' }}>
             <FileImageOutlined style={{ fontSize: 36 }} />
             <div style={{ fontSize: 11, marginTop: 6 }}>{photo.file_type.toUpperCase()}</div>
           </div>
         ) : (
-          <div style={{ color: '#333', fontSize: 12 }}>悬停照片预览</div>
+          <div style={{ color: 'var(--text-dim)', fontSize: 12 }}>悬停照片预览</div>
         )}
       </div>
 
@@ -612,7 +680,7 @@ function HoverPreviewPanel({
           <>
             {/* 文件名 */}
             <div style={{
-              color: '#ddd', fontSize: 12, fontWeight: 500,
+              color: 'var(--text-primary)', fontSize: 12, fontWeight: 500,
               marginBottom: 10, overflowWrap: 'break-word', lineHeight: '17px'
             }}>
               {photo.original_name}
@@ -654,7 +722,7 @@ function HoverPreviewPanel({
             {photo.notes && <InfoRow label="备注" value={photo.notes} />}
           </>
         ) : (
-          <div style={{ color: '#444', fontSize: 12, marginTop: 8, textAlign: 'center' }}>
+          <div style={{ color: 'var(--text-dim)', fontSize: 12, marginTop: 8, textAlign: 'center' }}>
             将鼠标移到照片上查看详情
           </div>
         )}

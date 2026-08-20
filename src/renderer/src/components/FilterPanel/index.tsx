@@ -107,17 +107,75 @@ export default function FilterPanel({ attrTypes, valueCounts, subLibCounts, filt
       style={{
         width: 240,
         minWidth: 240,
-        background: '#181818',
-        borderRight: '1px solid #252525',
+        background: 'var(--bg-surface)',
+        borderRight: '1px solid var(--border)',
         height: '100%',
         overflowY: 'auto',
         display: 'flex',
         flexDirection: 'column'
       }}
     >
-      {/* 子库树 */}
-      <div style={{ padding: '12px 12px 4px', borderBottom: '1px solid #252525' }}>
-        <div style={{ color: '#888', fontSize: 11, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>
+      {/* 已激活筛选 chips */}
+      {activeFilterCount > 0 && (
+        <div style={{ padding: '8px 10px 4px', borderBottom: '1px solid var(--border)', display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+          {filter.subLibraryId != null && (() => {
+            const flat = flattenSubLibraries(subLibraries)
+            const name = flat.find((l) => l.id === filter.subLibraryId)?.name ?? '子库'
+            return (
+              <Tag closable onClose={() => setFilter({ subLibraryId: undefined })}
+                style={{ fontSize: 11, lineHeight: '18px', background: 'var(--bg-elevated)', borderColor: 'var(--border-strong)', color: 'var(--text-primary)' }}>
+                📁 {name}
+              </Tag>
+            )
+          })()}
+          {(filter.dateFrom || filter.dateTo) && (
+            <Tag closable onClose={() => setFilter({ dateFrom: undefined, dateTo: undefined })}
+              style={{ fontSize: 11, lineHeight: '18px', background: 'var(--bg-elevated)', borderColor: 'var(--border-strong)', color: 'var(--text-primary)' }}>
+              📅 {filter.dateFrom ?? '…'} ~ {filter.dateTo ?? '…'}
+            </Tag>
+          )}
+          {filter.starredOnly && (
+            <Tag closable onClose={() => setFilter({ starredOnly: false })}
+              style={{ fontSize: 11, lineHeight: '18px', background: 'var(--bg-elevated)', borderColor: 'var(--border-strong)', color: 'var(--accent)' }}>
+              ★ 已收藏
+            </Tag>
+          )}
+          {(filter.organizationStatuses ?? []).map((s) => {
+            const item = organizationStatusItems.find((i) => i.value === s)
+            return (
+              <Tag key={s} closable onClose={() => setFilter({ organizationStatuses: (filter.organizationStatuses ?? []).filter((x) => x !== s) })}
+                style={{ fontSize: 11, lineHeight: '18px', background: 'var(--bg-elevated)', borderColor: 'var(--border-strong)', color: 'var(--text-primary)' }}>
+                {item?.label ?? s}
+              </Tag>
+            )
+          })}
+          {(filter.fileTypes ?? []).map((ft) => (
+            <Tag key={ft} closable onClose={() => setFilter({ fileTypes: (filter.fileTypes ?? []).filter((x) => x !== ft) })}
+              style={{ fontSize: 11, lineHeight: '18px', background: 'var(--bg-elevated)', borderColor: 'var(--border-strong)', color: 'var(--text-primary)' }}>
+              {ft.toUpperCase()}
+            </Tag>
+          ))}
+          {attrTypes.map((type) => {
+            const selectedForType = filter.filters[type.id] ?? []
+            return selectedForType.map((valueId) => {
+              const val = (type.values ?? []).find((v) => v.id === valueId)
+              if (!val) return null
+              return (
+                <Tag key={`${type.id}-${valueId}`} closable
+                  onClose={() => {
+                    const next = selectedForType.filter((x) => x !== valueId)
+                    setFilter({ filters: { ...filter.filters, [type.id]: next } })
+                  }}
+                  style={{ fontSize: 11, lineHeight: '18px', background: 'var(--bg-elevated)', borderColor: 'var(--border-strong)', color: 'var(--text-primary)' }}>
+                  {type.display_name}: {val.value}
+                </Tag>
+              )
+            })
+          })}
+        </div>
+      )}
+      <div style={{ padding: '12px 12px 4px', borderBottom: '1px solid var(--border)' }}>
+        <div style={{ color: 'var(--text-secondary)', fontSize: 11, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>
           子库
         </div>
         <Tree
@@ -167,15 +225,15 @@ export default function FilterPanel({ attrTypes, valueCounts, subLibCounts, filt
             zIndex: 3000,
             minWidth: 190,
             padding: '4px 0',
-            background: '#1e1e1e',
-            border: '1px solid #333',
+            background: 'var(--bg-elevated)',
+            border: '1px solid var(--border-strong)',
             borderRadius: 6,
             boxShadow: '0 6px 24px rgba(0,0,0,0.55)'
           }}
           onClick={(event) => event.stopPropagation()}
           onContextMenu={(event) => { event.preventDefault(); event.stopPropagation() }}
         >
-          <div style={{ padding: '6px 14px', color: '#777', fontSize: 11, borderBottom: '1px solid #2a2a2a' }}>
+          <div style={{ padding: '6px 14px', color: 'var(--text-secondary)', fontSize: 11, borderBottom: '1px solid var(--border)' }}>
             {contextMenu.name}
           </div>
           <button
@@ -223,8 +281,8 @@ export default function FilterPanel({ attrTypes, valueCounts, subLibCounts, filt
       )}
 
       {/* 时间范围 */}
-      <div style={{ padding: '10px 12px', borderBottom: '1px solid #252525' }}>
-        <div style={{ color: '#888', fontSize: 11, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>
+      <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)' }}>
+        <div style={{ color: 'var(--text-secondary)', fontSize: 11, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>
           时间范围
         </div>
         <Segmented
@@ -240,7 +298,7 @@ export default function FilterPanel({ attrTypes, valueCounts, subLibCounts, filt
         />
         <RangePicker
           size="small"
-          style={{ width: '100%', background: '#222', borderColor: '#333' }}
+          style={{ width: '100%', background: 'var(--bg-elevated)', borderColor: 'var(--border-strong)' }}
           onChange={handleDateChange as never}
           value={
             filter.dateFrom && filter.dateTo
@@ -251,7 +309,7 @@ export default function FilterPanel({ attrTypes, valueCounts, subLibCounts, filt
       </div>
 
       {/* 已收藏 */}
-      <div style={{ padding: '10px 12px', borderBottom: '1px solid #252525' }}>
+      <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)' }}>
         <div
           onClick={() => setFilter({ starredOnly: !filter.starredOnly })}
           style={{
@@ -259,17 +317,17 @@ export default function FilterPanel({ attrTypes, valueCounts, subLibCounts, filt
             cursor: 'pointer', minHeight: 28
           }}
         >
-          <span style={{ display: 'flex', alignItems: 'center', gap: 7, color: filter.starredOnly ? '#c8832a' : '#bbb', fontSize: 12 }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 7, color: filter.starredOnly ? 'var(--accent)' : 'var(--text-primary)', fontSize: 12 }}>
             <Checkbox checked={!!filter.starredOnly} style={{ pointerEvents: 'none' }} />
-            <StarFilled style={{ color: filter.starredOnly ? '#c8832a' : '#555', fontSize: 13 }} />
+            <StarFilled style={{ color: filter.starredOnly ? 'var(--accent)' : 'var(--text-dim)', fontSize: 13 }} />
             已收藏
           </span>
         </div>
       </div>
 
       {/* 整理状态 */}
-      <div style={{ padding: '10px 12px', borderBottom: '1px solid #252525' }}>
-        <div style={{ color: '#888', fontSize: 11, marginBottom: 5, textTransform: 'uppercase', letterSpacing: 1 }}>
+      <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)' }}>
+        <div style={{ color: 'var(--text-secondary)', fontSize: 11, marginBottom: 5, textTransform: 'uppercase', letterSpacing: 1 }}>
           整理状态
         </div>
         {organizationStatusItems.map((item) => {
@@ -286,12 +344,12 @@ export default function FilterPanel({ attrTypes, valueCounts, subLibCounts, filt
                 cursor: 'pointer'
               }}
             >
-              <span style={{ display: 'flex', alignItems: 'center', gap: 7, color: '#bbb', fontSize: 12 }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 7, color: 'var(--text-primary)', fontSize: 12 }}>
                 <Checkbox checked={selectedStatuses.includes(item.value)} style={{ pointerEvents: 'none' }} />
-                <span style={{ color: '#666', width: 14 }}>{item.icon}</span>
+                <span style={{ color: 'var(--text-secondary)', width: 14 }}>{item.icon}</span>
                 {item.label}
               </span>
-              <span style={{ color: '#555', fontSize: 11 }}>{count}</span>
+              <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>{count}</span>
             </div>
           )
         })}
@@ -299,8 +357,8 @@ export default function FilterPanel({ attrTypes, valueCounts, subLibCounts, filt
 
       {/* 文件格式 */}
       {filterOptions.fileTypes.length > 0 && (
-        <div style={{ padding: '10px 12px', borderBottom: '1px solid #252525' }}>
-          <div style={{ color: '#888', fontSize: 11, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>
+        <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ color: 'var(--text-secondary)', fontSize: 11, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>
             <FileImageOutlined style={{ marginRight: 5 }} />文件格式
           </div>
           <Select
@@ -352,10 +410,10 @@ export default function FilterPanel({ attrTypes, valueCounts, subLibCounts, filt
             <Panel
               key={type.id}
               header={
-                <span style={{ color: '#ccc', fontSize: 13 }}>
+                <span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
                   {type.display_name}
                   {selectedForType.length > 0 && (
-                    <Tag color="#c8832a" style={{ marginLeft: 6, fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>
+                    <Tag color="var(--accent)" style={{ marginLeft: 6, fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>
                       {selectedForType.length}
                     </Tag>
                   )}
@@ -371,7 +429,7 @@ export default function FilterPanel({ attrTypes, valueCounts, subLibCounts, filt
                   value={searchQuery}
                   onChange={(e) => setAttrSearch((prev) => ({ ...prev, [type.id]: e.target.value }))}
                   allowClear
-                  style={{ marginBottom: 6, background: '#1a1a1a', borderColor: '#2a2a2a', fontSize: 11 }}
+                  style={{ marginBottom: 6, background: 'var(--bg-elevated)', borderColor: 'var(--border)', fontSize: 11 }}
                 />
               )}
               <div style={{ maxHeight: 200, overflowY: 'auto' }}>
@@ -403,10 +461,10 @@ export default function FilterPanel({ attrTypes, valueCounts, subLibCounts, filt
                         {isFilm && (v as any).icon_key && (
                           <FilmIconImg iconKey={(v as any).icon_key} size={20} />
                         )}
-                        <span style={{ color: '#bbb', fontSize: 12 }}>{v.value}</span>
+                        <span style={{ color: 'var(--text-primary)', fontSize: 12 }}>{v.value}</span>
                       </div>
                       {count > 0 && (
-                        <span style={{ color: '#555', fontSize: 11 }}>{count}</span>
+                        <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>{count}</span>
                       )}
                     </div>
                   )
@@ -418,7 +476,7 @@ export default function FilterPanel({ attrTypes, valueCounts, subLibCounts, filt
       </Collapse>
 
       {/* 排序 */}
-      <div style={{ padding: '8px 12px', borderTop: '1px solid #252525', display: 'flex', gap: 6, alignItems: 'center' }}>
+      <div style={{ padding: '8px 12px', borderTop: '1px solid var(--border)', display: 'flex', gap: 6, alignItems: 'center' }}>
         <Select
           size="small"
           value={filter.sortBy}
@@ -435,7 +493,7 @@ export default function FilterPanel({ attrTypes, valueCounts, subLibCounts, filt
             size="small"
             icon={filter.sortOrder === 'desc' ? <SortDescendingOutlined /> : <SortAscendingOutlined />}
             onClick={() => setFilter({ sortOrder: filter.sortOrder === 'desc' ? 'asc' : 'desc' })}
-            style={{ background: '#222', borderColor: '#333', color: '#ccc' }}
+            style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border-strong)', color: 'var(--text-primary)' }}
           />
         </Tooltip>
       </div>
@@ -452,9 +510,10 @@ export default function FilterPanel({ attrTypes, valueCounts, subLibCounts, filt
             dateField: 'imported_at',
             fileTypes: [],
             organizationStatuses: [],
-            subLibraryId: undefined
+            subLibraryId: undefined,
+            starredOnly: false
           })}
-          style={{ margin: '0 12px 8px', color: '#c8832a' }}
+          style={{ margin: '0 12px 8px', color: 'var(--accent)' }}
         >
           清除所有筛选 ({activeFilterCount})
         </Button>

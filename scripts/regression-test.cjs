@@ -10,7 +10,7 @@ const { execSync } = require('child_process')
 
 // esbuild bundle renderer
 const out = '/tmp/ff-regression.cjs'
-execSync('node_modules/.bin/esbuild src/main/features/export/film-frame-renderer.ts --bundle --platform=node --format=cjs --outfile=' + out + ' --external:@napi-rs/canvas --external:sharp --external:electron', { stdio: 'pipe' })
+execSync('node_modules/.bin/esbuild src/main/features/export/frame-renderer/index.ts --bundle --platform=node --format=cjs --outfile=' + out + ' --external:@napi-rs/canvas --external:sharp --external:electron', { stdio: 'pipe' })
 const { renderFilmFrame } = require(out)
 
 const stock = {

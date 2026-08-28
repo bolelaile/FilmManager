@@ -22,7 +22,7 @@ import {
   getPhotoAttrValue,
   resolveFilmFormat
 } from '../film-format/film-format'
-import { renderFilmFrame, FORMAT_DEFINITIONS, type FilmFormatId } from './film-frame-renderer'
+import { renderFilmFrame, FORMAT_DEFINITIONS, type FilmFormatId } from './frame-renderer'
 import { resolveStock } from './stock-presets'
 import type {
   ExportConfig,

@@ -378,9 +378,10 @@ export function registerPhotosIpc(): void {
   // 全屏预览：返回 base64 JPEG（最多同时处理 1 个，新请求到来时丢弃旧的排队请求）
   ipcMain.handle('photos:fullPreview', async (_, filePath: string, iccPath?: string, rotation = 0) => {
     // 若有排队中的旧请求，令其立即返回 null
-    if (pendingPreviewResolve) {
-      pendingPreviewResolve(null)
+    const oldResolve: ((v: null) => void) | null = pendingPreviewResolve
+    if (oldResolve) {
       pendingPreviewResolve = null
+      oldResolve(null)
     }
     // 若正在处理中，将本次请求排队（旧排队已被上面取消）
     if (previewInFlight) {
@@ -398,9 +399,10 @@ export function registerPhotosIpc(): void {
     } finally {
       previewInFlight = false
       // 若排队中有新请求，通知它继续（但它已持有新的 filePath 故直接返回 null 让前端重试）
-      if (pendingPreviewResolve) {
-        pendingPreviewResolve(null)
+      const resolve: ((v: null) => void) | null = pendingPreviewResolve
+      if (resolve) {
         pendingPreviewResolve = null
+        resolve(null)
       }
     }
   })

@@ -7,6 +7,7 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "test:layout": "node scripts/test-library-layout.mjs",
+    "test:logic": "node scripts/logic-test.cjs",
     "rebuild": "electron-rebuild -f -w better-sqlite3 -w sharp",
     "postinstall": "electron-rebuild -f -w better-sqlite3 -w sharp",
     "dist": "npm run build && electron-builder --win --x64",

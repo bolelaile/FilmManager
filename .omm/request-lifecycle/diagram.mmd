@@ -1,0 +1,29 @@
+graph TD
+    user["用户操作\n（导入/浏览/编辑/导出）"]:::user
+    r_comp["React 组件\nApp.tsx"]:::renderer
+    r_store["Zustand Store\nlibrary/filter/ui"]:::renderer
+    preload["preload contextBridge"]:::bridge
+    ipc["IPC Handler\nipcMain.handle"]:::main
+    db["SQLite\nbetter-sqlite3"]:::data
+    worker["Worker 池"]:::worker
+    export["导出管道\nCanvas"]:::service
+
+    user --> r_comp
+    r_comp -->|"useStore"| r_store
+    r_comp -->|"window.api.xxx()"| preload
+    preload -->|"ipcRenderer.invoke"| ipc
+    ipc -->|"SQL 查询"| db
+    ipc -->|"线程池调度"| worker
+    ipc -->|"渲染帧"| export
+    db -->|"返回数据"| ipc
+    ipc -->|"返回结果"| preload
+    preload -->|"Promise resolve"| r_comp
+    r_store -->|"触发重渲染"| r_comp
+
+    classDef user fill:#f59e0b,color:#fff
+    classDef renderer fill:#3b82f6,color:#fff
+    classDef bridge fill:#a78bfa,color:#fff
+    classDef main fill:#ef4444,color:#fff
+    classDef data fill:#10b981,color:#fff
+    classDef worker fill:#8b5cf6,color:#fff
+    classDef service fill:#6366f1,color:#fff

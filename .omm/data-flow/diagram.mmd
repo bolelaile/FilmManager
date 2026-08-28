@@ -1,0 +1,28 @@
+graph LR
+    src["原始照片文件\nRAW/JPEG"]:::source
+    import["导入\nipc/import.ts"]:::main
+    files["文件存储\nlibrary/files/"]:::store
+    thumbs["缩略图\nlibrary/thumbs/"]:::store
+    db["SQLite\nfilm.db"]:::store
+    exif["EXIF 元数据\nexif-reader"]:::process
+    renderer["React 渲染\nPhotoGrid/PhotoViewer"]:::renderer
+    export["导出\nexportPipeline"]:::service
+    output["导出文件\nJPEG+边框"]:::output
+
+    src -->|"复制"| files
+    src -->|"Worker 解码"| thumbs
+    src -->|"读取 EXIF"| exif
+    exif -->|"写入属性"| db
+    files -->|"注册记录"| db
+    thumbs -->|"展示"| renderer
+    db -->|"查询"| renderer
+    files -->|"读取原图"| export
+    export -->|"渲染边框"| output
+
+    classDef source fill:#f59e0b,color:#fff
+    classDef main fill:#ef4444,color:#fff
+    classDef store fill:#10b981,color:#fff
+    classDef process fill:#8b5cf6,color:#fff
+    classDef renderer fill:#3b82f6,color:#fff
+    classDef service fill:#6366f1,color:#fff
+    classDef output fill:#a78bfa,color:#fff

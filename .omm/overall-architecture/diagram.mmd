@@ -1,0 +1,28 @@
+graph LR
+    main["Electron 主进程\nsrc/main/index.ts\n窗口+生命周期"]:::main
+    db["数据库\nsrc/main/db\nbetter-sqlite3 + WAL"]:::data
+    ipc["IPC 层\nsrc/main/ipc/\n8个模块"]:::main
+    preload["Preload 桥接\nsrc/preload\ncontextBridge"]:::bridge
+    renderer["React 渲染\nsrc/renderer\nantd + zustand"]:::renderer
+    workers["Worker 线程池\nsrc/main/workers\n缩略图生成"]:::worker
+    export["导出管道\nsrc/main/services/export\nCanvas渲染胶片框"]:::service
+    layout["库布局\nsrc/main/services\nlibrary-layout"]:::service
+    filmformat["胶片格式\nsrc/main/services\nfilm-format"]:::service
+
+    main -->|"initDb"| db
+    main -->|"initIpc"| ipc
+    ipc -->|"注册处理器"| db
+    ipc -->|"生成缩略图"| workers
+    ipc -->|"导出渲染"| export
+    ipc -->|"文件整理"| layout
+    export -->|"格式解析"| filmformat
+    main -->|"加载 preload"| preload
+    preload -->|"contextBridge.api"| renderer
+    renderer -->|"ipcRenderer.invoke"| ipc
+
+    classDef main fill:#ef4444,color:#fff
+    classDef data fill:#10b981,color:#fff
+    classDef bridge fill:#f59e0b,color:#fff
+    classDef renderer fill:#3b82f6,color:#fff
+    classDef worker fill:#8b5cf6,color:#fff
+    classDef service fill:#6366f1,color:#fff

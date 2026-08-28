@@ -21,6 +21,7 @@ const FORMAT_OPTIONS: { value: FilmFormatId; label: string }[] = [
   { value: '67', label: '120 · 6×7' },
   { value: '69', label: '120 · 6×9' },
   { value: '612', label: '120 · 6×12' },
+  { value: '617', label: '120 · 6×17' },
   { value: 'none', label: '无边框' }
 ]
 

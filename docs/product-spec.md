@@ -1,6 +1,6 @@
 # FilmManager 产品规格文档
 
-**版本：** 1.4.0
+**版本：** 1.4.1
 **技术栈：** Electron 29 · React 18 · TypeScript 5 · Ant Design 5 · Zustand 4 · better-sqlite3 9 · Sharp 0.33 · Leaflet 1.9 · @tanstack/react-virtual 3 · electron-vite 2
 
 ---
@@ -1064,5 +1064,6 @@ App（ConfigProvider: 深色主题 #141414，primary #c8832a）
 | **1.3.4** | **UI 规范化与卷视图大缩略图重设计**：① 大视图改为横向详情行（方案 A）——`LargeRollRow` 组件，行高 220px，左侧 55% 封面图（`objectFit:cover`），右侧 45% 展示卷名/胶片/格式/相机/镜头/地点/拍摄年月，操作按钮位于信息区底部；普通 1 列/宽屏 2 列；② 新增 `OtherPhotosLargeRow` 与大视图同形；③ `RollCard` 精简为纯中视图；④ 全项目 Modal 统一 `borderRadius=8`，footer `padding: 12px 20px`，消除按钮贴边问题 |
 | **1.3.5** | **UX 优化：时间线视图、搜索防抖、筛选 Chips、全局拖拽增强**：① 新增时间线视图（`viewMode='timeline'`）——按年月分组展示照片，支持切换拍摄日期/入库日期口径，月份卡片显示缩略图预览，点击跳转到该月照片列表；② 搜索框添加 300ms 防抖——本地 `searchInput` 状态即时响应输入，防抖后写入 filter store，外部重置时自动同步本地值；③ FilterPanel 顶部新增筛选 Chips——有激活筛选时以可关闭 Tag 形式逐条展示，点击 × 可单独移除对应筛选；④ 全局拖拽导入增强——内容区 `Layout.Content` 监听拖拽事件，拖入文件时显示蒙层提示，放开后自动打开导入对话框并预填文件路径；新增 `photos:timeline` IPC（SQL `strftime('%Y-%m', ...)` 分组，`col` 通过白名单赋值防止注入） |
 | **1.3.6** | **带胶片边框导出功能**（详见《导出功能优化方案》）：边框模板按 `film_format` 自动匹配（135 齿孔条 / 半格竖向齿孔 / Xpan 宽幅齿孔 / 120 背纸文字边 / 大画幅净边+缺角 / 无边框 共 6 类）；边字 token 系统（`{film}``{camera}``{date}``{iso}``{aperture}``{shutter}``{frame_no}` 等，含批量递增帧号）；导出格式 JPEG/PNG/WebP/BMP/TIFF，8/10/12/16-bit 位深，长边像素/倍率/DPI，透明/高斯模糊/纯色背景；单张/选中/整卷/当前筛选批量导出（并发限流 + 进度/取消），命名模板与同名冲突处理；`export_presets` 表 + 4 个内置预设与自定义预设持久化；导入侧 `detectFilmFormat`/`resolveFilmFormat` 抽取为共享模块 `services/film-format.ts` |
+| **1.4.1** | **边框渲染核心完整移植 + 画幅补全**：从参考项目提取 3 个核心文件封装为 frame-renderer 子模块（shared/frame-135/frame-generic），补齐 120 边字三角箭头+条码+preset 交替、齿孔三种对齐、imageInSprockets 曝光区；新增 6x17 画幅；修复 FilmFormatId 类型不一致 |
 | **1.4.0** | **分层架构重构**：6 层分层（infra/data/features/ipc-adapters/app/UI）；9 个功能核心 Service 独立封装（photos/import/rolls/attributes/sublibrary/locations/library/export/external-apps）；7 个 Repository 封装全部 SQL；9 个 IPC 薄 adapter（仅转发）；渲染层 service-client；DI 装配(bootstrap) + 架构文档 + 功能测试流程(L1/L2/L3)；修复 PhotoService COUNT 缓存双查询、film-frame-renderer 残留 sharp 导入、photos.ts fullPreview 类型告警 |
 | **1.3.7** | **导出功能 Canvas 重构 + 性能与健壮性优化**：① 导出改为参考 film-index-generator 的 Canvas 方法——主进程 `@napi-rs/canvas` 渲染（`film-frame-renderer.ts`），物理 mm 几何（5.5mm 片基带/4.75mm 齿孔距）、暖色渐变片基 + 齿孔浮雕、Courier 等宽边字 + 发光 + 品牌/预设交替 + 帧号 + "A" + 条码；`stock-presets.ts` 按工艺定墨色（C-41橙/BW白/E-6暖/ECN-2米）+ 胶卷品牌库；照片 cover 填满 + pan/zoom；9 画幅覆盖；画布水平 padding 对称居中；格式精简为 JPEG/PNG；旧预设迁移 `templateId`→`formatId`；`@napi-rs/canvas` 加入 asarUnpack 与 prepare-win-natives 跨平台下载；② 导入并行化——`min(4, CPU-2)` 有界并发 + 异步 `copyFile`；③ 并行同名竞态修复——`ensureUniqueFilePath` `claimed` 集合消除 TOCTOU；④ Worker Pool 错误处理——崩溃批量 reject + 自动重建 + `terminating` 标志；⑤ GPS 缓存——N 次全表扫描降为 1 次；⑥ COUNT 缓存——翻页复用（2s TTL + 变更失效）；⑦ 启动性能——`db_meta.seed_version` 门控昂贵迁移 |

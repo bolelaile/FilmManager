@@ -2,7 +2,7 @@
 
 面向胶片摄影爱好者的本地桌面应用，用于管理胶片扫描文件。完全离线，所有数据本地存储，仅地点搜索需要网络。
 
-**当前版本：** 1.4.0 · **平台：** Windows x64 · **许可：** MIT
+**当前版本：** 1.4.1 · **平台：** Windows x64 · **许可：** MIT
 
 ---
 
@@ -147,6 +147,12 @@ npm run dist:cross    # Linux / macOS 跨平台编译 Windows 安装包
 ## 更新历史
 
 > 按版本由新到旧排列。
+
+### 1.4.1
+
+- **边框渲染核心完整移植**：从参考项目提取 3 个核心文件封装为 `frame-renderer/` 子模块（shared/frame-135/frame-generic），封装完整封闭，对外仅暴露 `renderFilmFrame`
+- **补齐边字与齿孔**：120 边字三角箭头+条码+preset 交替、齿孔三种对齐（continuous/center/anchored）、imageInSprockets 曝光区
+- **画幅补全**：新增 6×17 画幅；filmFormatToId 补 6×8/6×17 映射；修复 FilmFormatId 类型不一致
 
 ### 1.4.0
 

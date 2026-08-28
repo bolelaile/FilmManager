@@ -10,6 +10,7 @@ export type FilmFormatId =
   | '67' // 120 · 6×7
   | '69' // 120 · 6×9
   | '612' // 120 · 6×12
+  | '617' // 120 · 6×17
   | 'none' // 无边框
 
 export type EdgePosition = 'top' | 'bottom' | 'left' | 'right'
@@ -136,8 +137,10 @@ export function filmFormatToId(filmFormat: string | null): FilmFormatId {
   if (s.includes('645')) return '645'
   if (s.includes('6x6') || s.includes('6×6')) return '66'
   if (s.includes('6x7') || s.includes('6×7')) return '67'
+  if (s.includes('6x8') || s.includes('6×8')) return '67' // 6×8 与 6×7 比例接近，归 67
   if (s.includes('6x9') || s.includes('6×9')) return '69'
   if (s.includes('6x12') || s.includes('6×12')) return '612'
+  if (s.includes('6x17') || s.includes('6×17')) return '617'
   if (s.includes('4x5') || s.includes('8x10') || s.includes('大画幅')) return 'none'
   return '135'
 }

@@ -68,8 +68,10 @@ function filmFormatToId(filmFormat) {
   if (s.includes("645")) return "645";
   if (s.includes("6x6") || s.includes("6\xD76")) return "66";
   if (s.includes("6x7") || s.includes("6\xD77")) return "67";
+  if (s.includes("6x8") || s.includes("6\xD78")) return "67";
   if (s.includes("6x9") || s.includes("6\xD79")) return "69";
   if (s.includes("6x12") || s.includes("6\xD712")) return "612";
+  if (s.includes("6x17") || s.includes("6\xD717")) return "617";
   if (s.includes("4x5") || s.includes("8x10") || s.includes("\u5927\u753B\u5E45")) return "none";
   return "135";
 }

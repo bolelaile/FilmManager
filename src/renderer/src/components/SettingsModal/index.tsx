@@ -15,6 +15,16 @@ import { FilmIconImg } from '../FilmIcon'
 
 const CHANGELOG: { version: string; summary: string; items: string[] }[] = [
   {
+    version: '1.4.1',
+    summary: '完整移植参考项目边框渲染核心 + 画幅补全 + 漏洞修复',
+    items: [
+      '完整移植参考项目 film-index-generator 的 3 个边框渲染核心文件到 frame-renderer 子模块（shared/frame-135/frame-generic），封装完整封闭',
+      '补齐 120 边字（三角箭头 + 条码 + preset 交替 + 品牌缩写）、齿孔三种对齐、imageInSprockets 曝光区、edgeMarkStartIndex',
+      '新增 6×17 画幅支持；filmFormatToId 补 6×8/6×17 映射；ExportModal 画幅下拉补 6×17',
+      '修复 FilmFormatId 类型不一致（export-types vs frame-renderer）',
+    ],
+  },
+  {
     version: '1.4.0',
     summary: '分层架构重构——6 层分层 + 功能核心独立封装 + 数据访问层 Repository',
     items: [

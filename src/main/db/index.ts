@@ -30,7 +30,7 @@ export function initDb(libraryRoot: string): void {
  * 这些函数本身幂等（INSERT OR IGNORE / UPDATE ... WHERE IS NULL），bump 后
  * 重跑一次即可应用增量并记录新版本。
  */
-const SEED_VERSION = '1.4.0'
+const SEED_VERSION = '1.4.1'
 
 function getMeta(key: string): string | null {
   const row = db.prepare('SELECT value FROM db_meta WHERE key = ?').get(key) as { value: string } | undefined

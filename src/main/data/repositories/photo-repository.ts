@@ -174,6 +174,11 @@ export class PhotoRepository {
     `).all(...args, month) as PhotoRow[]
   }
 
+  /** 全量照片数（库统计用） */
+  countAll(): number {
+    return (this.db.prepare('SELECT COUNT(*) as c FROM photos').get() as { c: number }).c
+  }
+
   /** 删除照片记录（事务） */
   delete(ids: number[]): void {
     if (ids.length === 0) return

@@ -5,7 +5,7 @@
 import fs from 'fs'
 import path from 'path'
 import type { PhotoRepository } from '../../data/repositories/photo-repository'
-import { generateThumbnail } from '../../services/thumbnail'
+import { generateThumbnail } from '../../features/thumbnails/thumbnail'
 
 export interface IccProfile { name: string; path: string; isPreset: boolean }
 

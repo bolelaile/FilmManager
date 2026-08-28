@@ -17,7 +17,7 @@ var __copyProps = (to, from, except, desc) => {
 };
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// src/main/services/export/stock-presets.ts
+// src/main/features/export/stock-presets.ts
 var stock_presets_exports = {};
 __export(stock_presets_exports, {
   BUILTIN_STOCKS: () => BUILTIN_STOCKS,

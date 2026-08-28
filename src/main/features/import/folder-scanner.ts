@@ -5,7 +5,7 @@
 import fs from 'fs'
 import path from 'path'
 import { getDb } from '../../db/index'
-import { SUPPORTED_EXTENSIONS } from '../../services/thumbnail'
+import { SUPPORTED_EXTENSIONS } from '../../features/thumbnails/thumbnail'
 
 export interface AttrMatch {
   typeId: number; valueId: number; value: string; key: string; iconKey?: string | null; matchedAlias: string | null

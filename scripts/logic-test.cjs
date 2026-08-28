@@ -36,7 +36,7 @@ console.log('=== L2 逻辑单测 ===\n')
 
 // ── 1. stock 品牌匹配 ──
 console.log('[stock-presets: resolveStock]')
-bundle('src/main/services/export/stock-presets.ts', 'stock.cjs')
+bundle('src/main/features/export/stock-presets.ts', 'stock.cjs')
 const { resolveStock } = require(path.join(tmpDir, 'stock.cjs'))
 test('Kodak Portra 400 → C-41 橙', () => {
   const s = resolveStock('Kodak Portra 400 [135 / 35mm]')
@@ -71,7 +71,7 @@ test('null → 回退 C-41 + 默认 edgeText', () => {
 // ── 2. 内容哈希（computeContentHash 逻辑复刻，避免 bundle 引入 electron） ──
 console.log('\n[thumbnail: computeContentHash]')
 const { createHash } = require('crypto')
-// 复刻 src/main/services/thumbnail.ts 的 computeContentHash 纯逻辑（重构后将抽到 infra）
+// 复刻 src/main/features/thumbnails/thumbnail.ts 的 computeContentHash 纯逻辑（重构后将抽到 infra）
 function computeContentHash(filePath) {
   let fd = null
   try {
@@ -102,7 +102,7 @@ test('读取失败返回 null', () => {
 
 // ── 3. ensureUniqueFilePath + claimed 竞态 ──
 console.log('\n[library-layout: ensureUniqueFilePath]')
-bundle('src/main/services/library-layout.ts', 'layout.cjs')
+bundle('src/main/features/library-layout/library-layout.ts', 'layout.cjs')
 const { ensureUniqueFilePath, pathKey } = require(path.join(tmpDir, 'layout.cjs'))
 test('路径不存在时返回原路径', () => {
   const p = path.join(tmpDir, 'nonexistent-' + Date.now() + '.jpg')

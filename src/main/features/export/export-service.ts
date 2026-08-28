@@ -1,7 +1,7 @@
 /**
  * 导出功能核心服务。
  * 封装自动匹配、预览、单张/批量导出、取消、预设 CRUD。
- * 复用 services/export/{exportPipeline,film-frame-renderer,stock-presets}（批次3迁入 features/export）。
+ * 复用 features/export/{exportPipeline,film-frame-renderer,stock-presets}（批次3迁入 features/export）。
  */
 import os from 'os'
 import fs from 'fs'
@@ -11,7 +11,7 @@ import type { ExportConfig, ExportPreset } from '../../../shared/export-types'
 import { DEFAULT_EXPORT_CONFIG } from '../../../shared/export-types'
 import {
   resolveBorderForPhoto, renderExport, renderExportPreview, resolveTokens, buildFilename, extForFormat, resolveConflict
-} from '../../services/export/exportPipeline'
+} from '../../features/export/exportPipeline'
 import type { ExportPresetRepository } from '../../data/repositories/export-preset-repository'
 
 let batchCancelled = false

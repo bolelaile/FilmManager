@@ -11,7 +11,7 @@ import { app } from 'electron'
 import fs from 'fs'
 import log from 'electron-log'
 import { getDb } from '../db/index'
-import { synchronizeLibraryLayout } from '../services/library-layout'
+import { synchronizeLibraryLayout } from '../features/library-layout/library-layout'
 
 let libraryRoot: string
 let thumbDir: string

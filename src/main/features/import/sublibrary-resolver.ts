@@ -4,7 +4,7 @@
  */
 import path from 'path'
 import { getDb } from '../../db/index'
-import { getOrCreateSubLibrary as getOrCreatePhysicalSubLibrary } from '../../services/library-layout'
+import { getOrCreateSubLibrary as getOrCreatePhysicalSubLibrary } from '../../features/library-layout/library-layout'
 import type { ImportOptions } from '../../../shared/import-types'
 
 export function resolveTargetSubLibrary(

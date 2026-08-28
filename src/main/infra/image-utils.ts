@@ -1,6 +1,6 @@
 /**
  * 图像处理纯工具（基础设施层）。
- * 从 services/thumbnail.ts 抽取的无 Electron/DB 依赖纯函数，供功能核心层复用。
+ * 从 features/thumbnails/thumbnail.ts 抽取的无 Electron/DB 依赖纯函数，供功能核心层复用。
  * 含 nativeImage 的 openSharp 仍保留在 thumbnail.ts（Electron 耦合）。
  */
 import fs from 'fs'

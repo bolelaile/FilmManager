@@ -14,13 +14,13 @@ import type Database from 'better-sqlite3'
 import { getDb } from '../../db/index'
 import {
   generateThumbnail, getImageMeta, getExifData, SUPPORTED_EXTENSIONS, getFileType, computeContentHash
-} from '../../services/thumbnail'
+} from '../../features/thumbnails/thumbnail'
 import {
   getPhotoFilmSizeType, getPhotoCameraFormatInfo, resolveFilmFormat, assignFilmFormatAttribute
-} from '../../services/film-format'
+} from '../../features/film-format/film-format'
 import {
   ensureSubLibraryDirectory, ensureUniqueFilePath, getOrCreateSubLibrary as getOrCreatePhysicalSubLibrary
-} from '../../services/library-layout'
+} from '../../features/library-layout/library-layout'
 import { getLibraryRoot, getThumbDir } from '../../ipc/index'
 import type { AutoOrganizeMode, ImportOptions } from '../../../shared/import-types'
 import { thumbnailPool } from '../../workers/worker-pool'

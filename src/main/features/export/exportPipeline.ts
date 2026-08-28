@@ -14,14 +14,14 @@ import {
   isRawFormat,
   normalizeRotation,
   getExifData
-} from '../thumbnail'
+} from '../thumbnails/thumbnail'
 import {
   getPhotoFilmFormat,
   getPhotoFilmSizeType,
   getPhotoCameraFormatInfo,
   getPhotoAttrValue,
   resolveFilmFormat
-} from '../film-format'
+} from '../film-format/film-format'
 import { renderFilmFrame, FORMAT_DEFINITIONS, type FilmFormatId } from './film-frame-renderer'
 import { resolveStock } from './stock-presets'
 import type {

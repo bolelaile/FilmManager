@@ -5,7 +5,7 @@
  */
 import type Database from 'better-sqlite3'
 import type { SubLibraryRepository, SubLibNode } from '../../data/repositories/sublibrary-repository'
-import { createSubLibrary, renameSubLibrary, deleteSubLibrary } from '../../services/library-layout'
+import { createSubLibrary, renameSubLibrary, deleteSubLibrary } from '../../features/library-layout/library-layout'
 
 export class SubLibraryService {
   constructor(

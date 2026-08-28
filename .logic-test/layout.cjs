@@ -27,7 +27,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// src/main/services/library-layout.ts
+// src/main/features/library-layout/library-layout.ts
 var library_layout_exports = {};
 __export(library_layout_exports, {
   createSubLibrary: () => createSubLibrary,

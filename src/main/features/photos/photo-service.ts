@@ -11,10 +11,10 @@ import type Database from 'better-sqlite3'
 import type { PhotoRepository } from '../../data/repositories/photo-repository'
 import type { AttributeRepository } from '../../data/repositories/attribute-repository'
 import type { PhotoRow, AttrRow, QueryFilter, Paging } from '../../data/types'
-import { normalizeRotation, renderFullPreview } from '../../services/thumbnail'
-import { generateThumbnail } from '../../services/thumbnail'
+import { normalizeRotation, renderFullPreview } from '../../features/thumbnails/thumbnail'
+import { generateThumbnail } from '../../features/thumbnails/thumbnail'
 import { thumbnailPool } from '../../workers/worker-pool'
-import { movePhotosToSubLibrary } from '../../services/library-layout'
+import { movePhotosToSubLibrary } from '../../features/library-layout/library-layout'
 
 // ── COUNT 缓存（2s TTL + 变更失效） ──
 const COUNT_CACHE_TTL = 2000
@@ -188,7 +188,7 @@ export class PhotoService {
     const filePath = this.repo.getFilePath(id)
     if (!filePath) return null
     try {
-      const { getExifData } = await import('../../services/thumbnail')
+      const { getExifData } = await import('../../features/thumbnails/thumbnail')
       return await getExifData(filePath)
     } catch { return null }
   }

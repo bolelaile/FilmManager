@@ -3,8 +3,8 @@
  * 从 ipc/import.ts 抽取，供导入与导出共用，避免逻辑分叉。
  */
 import log from 'electron-log'
-import { getDb } from '../db/index'
-import { detectFilmFormat } from './thumbnail'
+import { getDb } from '../../db/index'
+import { detectFilmFormat } from '../thumbnails/thumbnail'
 
 /**
  * 相机画幅令牌 → film_format 属性值映射

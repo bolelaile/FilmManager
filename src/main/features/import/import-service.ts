@@ -10,7 +10,6 @@ import fs from 'fs'
 import path from 'path'
 import log from 'electron-log'
 import type { IpcMainInvokeEvent } from 'electron'
-import type Database from 'better-sqlite3'
 import { getDb } from '../../db/index'
 import {
   generateThumbnail, getImageMeta, getExifData, SUPPORTED_EXTENSIONS, getFileType, computeContentHash

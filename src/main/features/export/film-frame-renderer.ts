@@ -6,7 +6,6 @@
  * 几何由物理 mm 驱动（pxPerMm），保证比例真实。
  */
 import { createCanvas, loadImage, type Canvas, type SKRSContext2D } from '@napi-rs/canvas'
-import sharp from 'sharp'
 import type { ResolvedStock, FilmProcess } from './stock-presets'
 
 // ── 135 物理常量（mm） ──────────────────────────────────────────────────────
@@ -459,5 +458,3 @@ export async function renderFilmFrame(opts: RenderFilmFrameOptions): Promise<Buf
   }
   return canvas.toBuffer('image/png')
 }
-
-export { sharp }

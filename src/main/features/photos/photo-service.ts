@@ -48,21 +48,23 @@ export class PhotoService {
   list(params: QueryFilter & Paging): { total: number; rows: (PhotoRow & { attributes: AttrRow[] })[] } {
     const { page, pageSize, sortBy, sortOrder, ...filter } = params
     const paging: Paging = { page, pageSize, sortBy, sortOrder }
+    // 单次查询拿 rows + total
+    const r = this.repo.list(filter, paging)
+    // COUNT 缓存：命中则用缓存 total（避免翻页重复 COUNT），未命中则用本次 total 并缓存
     const cKey = countCacheKey(filter)
-    let total = countCache.get(cKey)?.total ?? null
-    if (total === null || Date.now() - (countCache.get(cKey)?.ts ?? 0) > COUNT_CACHE_TTL) {
-      const r = this.repo.list(filter, paging)
+    const cached = countCache.get(cKey)
+    let total: number
+    if (cached && Date.now() - cached.ts <= COUNT_CACHE_TTL) {
+      total = cached.total
+    } else {
       total = r.total
       countCache.set(cKey, { total, ts: Date.now() })
       if (countCache.size > COUNT_CACHE_MAX) {
         const firstKey = countCache.keys().next().value
         if (firstKey) countCache.delete(firstKey)
       }
-      const rows = this.withAttrs(r.rows)
-      return { total, rows }
     }
-    const rows = this.withAttrs(this.repo.list(filter, paging).rows)
-    return { total, rows }
+    return { total, rows: this.withAttrs(r.rows) }
   }
 
   private withAttrs(rows: PhotoRow[]): (PhotoRow & { attributes: AttrRow[] })[] {

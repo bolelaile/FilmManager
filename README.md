@@ -2,7 +2,7 @@
 
 面向胶片摄影爱好者的本地桌面应用，用于管理胶片扫描文件。完全离线，所有数据本地存储，仅地点搜索需要网络。
 
-**当前版本：** 1.3.7 · **平台：** Windows x64 · **许可：** MIT
+**当前版本：** 1.4.0 · **平台：** Windows x64 · **许可：** MIT
 
 ---
 
@@ -147,6 +147,15 @@ npm run dist:cross    # Linux / macOS 跨平台编译 Windows 安装包
 ## 更新历史
 
 > 按版本由新到旧排列。
+
+### 1.4.0
+
+- **分层架构重构**：6 层分层（基础设施 / 数据访问 / 功能核心 / IPC 适配 / 应用协调 / UI），功能模块分离为独立 Service 封装，层间调用清晰，便于单独升级或替换
+- **功能核心层**：9 个 Service（photos / import / rolls / attributes / sublibrary / locations / library / export / external-apps），每个可独立替换/升级
+- **Repository 数据层**：7 个 Repository 封装全部 SQL，功能核心不直接访问 DB
+- **IPC 薄适配层**：9 个 adapter 仅注册+转发（无 SQL/业务逻辑）
+- **渲染层 service-client**：window.api 类型化封装
+- **DI 装配 + 架构文档 + 功能测试流程**
 
 ### 1.3.7
 

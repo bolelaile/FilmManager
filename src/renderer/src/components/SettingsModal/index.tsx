@@ -15,6 +15,19 @@ import { FilmIconImg } from '../FilmIcon'
 
 const CHANGELOG: { version: string; summary: string; items: string[] }[] = [
   {
+    version: '1.4.0',
+    summary: '分层架构重构——6 层分层 + 功能核心独立封装 + 数据访问层 Repository',
+    items: [
+      '分层架构重构：基础设施层(infra) / 数据访问层(data/Repository) / 功能核心层(features/Service) / IPC 适配层 / 应用协调层 / UI 层',
+      '功能核心独立封装：9 个 Service（photos/import/rolls/attributes/sublibrary/locations/library/export/external-apps），可单独升级或替换',
+      'Repository 数据层：7 个 Repository 封装全部 SQL，功能核心不直接访问 DB',
+      'IPC 薄适配层：9 个 adapter 仅注册+转发（原 ~3500 行→~400 行），无 SQL/业务逻辑',
+      '渲染层 service-client：window.api 类型化封装，UI 不直接 ipcRenderer',
+      'DI 装配骨架(bootstrap) + 架构文档 + 功能测试流程(L1/L2/L3)',
+      '修复：PhotoService COUNT 缓存双查询、film-frame-renderer 残留 sharp 导入、photos.ts fullPreview 类型告警',
+    ],
+  },
+  {
     version: '1.3.7',
     summary: '导出功能 Canvas 重构（参考 film-index-generator）+ 性能与健壮性优化',
     items: [

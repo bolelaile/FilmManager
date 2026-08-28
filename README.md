@@ -24,38 +24,129 @@
 
 ## 项目结构
 
+项目采用 **6 层分层架构**（基础设施 → 数据访问 → 功能核心 → IPC 适配 → 应用协调 → UI），各层单向依赖、功能模块独立封装，便于单独升级或替换。详见 [`docs/架构分层.md`](docs/架构分层.md)。
+
 ```
 FilmManager/
 ├── src/
-│   ├── main/                   # Electron 主进程（Node.js + TypeScript）
-│   │   ├── index.ts            # 窗口创建、IPC 注册、自定义协议
-│   │   ├── db/                 # SQLite 初始化、Schema、增量迁移、种子数据
-│   │   ├── ipc/                # IPC Handler（photos / import / attrs / rolls / sublib / library / locations / export）
-│   │   ├── services/          # 业务逻辑（缩略图、EXIF/RAW、本地树状目录同步、胶片格式识别、Canvas 导出渲染器 + 胶卷品牌库）
-│   │   └── workers/           # 缩略图 Worker Thread 池
+│   ├── main/                       # Electron 主进程（Node.js + TypeScript）
+│   │   ├── index.ts                # 窗口创建、生命周期、自定义协议、app/win IPC
+│   │   │
+│   │   ├── app/                    # ── 5. 应用协调层 ──
+│   │   │   └── bootstrap.ts        #   DI 装配（统一构造 Repository + Service 单例）
+│   │   │
+│   │   ├── infra/                  # ── 1. 基础设施层 ──
+│   │   │   ├── image-utils.ts      #   纯图像工具（isRawFormat/normalizeRotation/computeContentHash/decodeBmp）
+│   │   │   ├── config.ts           #   库根目录配置读写
+│   │   │   └── ipc-bus.ts          #   IPC handle/send 统一封装
+│   │   │
+│   │   ├── data/                   # ── 2. 数据访问层（Repository） ──
+│   │   │   ├── index.ts            #   createRepositories 工厂
+│   │   │   ├── types.ts            #   行类型 + QueryFilter/Paging
+│   │   │   └── repositories/       #   7 个 Repository（封装全部 SQL）
+│   │   │       ├── photo-repository.ts
+│   │   │       ├── sublibrary-repository.ts
+│   │   │       ├── attribute-repository.ts
+│   │   │       ├── roll-repository.ts
+│   │   │       ├── location-repository.ts
+│   │   │       ├── export-preset-repository.ts
+│   │   │       └── import-queue-repository.ts
+│   │   │
+│   │   ├── features/               # ── 3. 功能核心层（独立 Service 封装） ──
+│   │   │   ├── photos/             #   PhotoService（列表/COUNT缓存/全屏预览/旋转/收藏/时间线）
+│   │   │   ├── import/             #   ImportService + folder-scanner/equipment-resolver/gps-linker/sublibrary-resolver
+│   │   │   ├── rolls/              #   RollService（建卷/删除三档/批量/卷内查询）
+│   │   │   ├── attributes/         #   AttributeService（CRUD/faceted/图标/别名/JSON导入）
+│   │   │   ├── sublibrary/         #   SubLibraryService（树/计数/CRUD，委托 library-layout）
+│   │   │   ├── locations/          #   LocationService + osm-geocoder（在线搜索/反向地理编码）
+│   │   │   ├── library/            #   LibraryService（库信息/ICC/统计/缩略图重生成）
+│   │   │   ├── export/             #   ExportService + exportPipeline + stock-presets
+│   │   │   │   └── frame-renderer/ #   边框渲染器子模块（封闭封装，移植自 film-index-generator）
+│   │   │   │       ├── index.ts    #     统一入口 renderFilmFrame（对外唯一暴露）
+│   │   │   │       ├── shared.ts   #     共享画布基元（渐变/齿孔/边字工具）
+│   │   │   │       ├── frame-135.ts#     135 渲染器（物理mm几何/齿孔/边字/条码）
+│   │   │   │       ├── frame-generic.ts # 通用渲染器（10画幅/120边字三角箭头+条码）
+│   │   │   │       └── types.ts    #     内部类型（不对外暴露）
+│   │   │   ├── thumbnails/         #   缩略图生成（Sharp + EXIF + 胶片格式识别）
+│   │   │   ├── film-format/        #   胶片格式识别（导入/导出共享）
+│   │   │   ├── library-layout/     #   磁盘目录树同步
+│   │   │   └── external-apps/      #   ExternalAppService（检测/打开图像软件）
+│   │   │
+│   │   ├── ipc/                    # ── 4. IPC 适配层（薄 adapter） ──
+│   │   │   ├── index.ts            #   统一注册 + library-layout 同步
+│   │   │   ├── photos.ts           #   仅注册+转发到 PhotoService
+│   │   │   ├── import.ts           #   dialog + 转发到 ImportService
+│   │   │   ├── attributes.ts       #   dialog + 转发到 AttributeService
+│   │   │   ├── rolls.ts            #   转发到 RollService
+│   │   │   ├── sublibraries.ts     #   转发到 SubLibraryService
+│   │   │   ├── library.ts          #   dialog + 转发到 LibraryService
+│   │   │   ├── locations.ts        #   转发到 LocationService
+│   │   │   └── export.ts           #   转发到 ExportService
+│   │   │
+│   │   ├── db/                     # SQLite 初始化、Schema、增量迁移、种子数据
+│   │   └── workers/                # 缩略图 Worker Thread 池（4线程+崩溃恢复）
+│   │
 │   ├── preload/
-│   │   └── index.ts            # contextBridge 暴露 window.api
-│   └── renderer/src/           # React 渲染进程
-│       ├── components/         # UI 组件（PhotoGrid / PhotoViewer / ExportModal / FilterPanel / RollsView / TimelineView / MapView / ImportDialog 等）
-│       ├── pages/Library.tsx   # 主页面
-│       ├── store/              # Zustand 全局状态（filter / library / ui 三 slice）
-│       └── types/              # TypeScript 类型定义
-├── src/shared/                 # main / renderer 共享类型（import-types / export-types）
+│   │   └── index.ts                # contextBridge 暴露 window.api（按领域分组）
+│   │
+│   ├── renderer/                   # ── 6. UI 层 ──
+│   │   ├── services/
+│   │   │   └── service-client.ts   #   window.api 类型化封装（UI 经此调用）
+│   │   └── src/
+│   │       ├── components/         #   UI 组件
+│   │       │   ├── PhotoGrid/      #     照片网格（虚拟滚动、三档视图、框选）
+│   │       │   ├── PhotoViewer/    #     全屏预览（直方图、属性编辑、缩放平移）
+│   │       │   ├── ExportModal/    #     导出弹窗（画幅/边字/pan-zoom/预览）
+│   │       │   ├── FilterPanel/    #     左侧筛选面板（属性/子库/faceted）
+│   │       │   ├── RollsView/      #     卷视图（三档/多选/批量）
+│   │       │   ├── TimelineView/   #     时间线视图（年月分组）
+│   │       │   ├── ImportDialog/   #     导入向导（单批次/卷模式）
+│   │       │   ├── MapView/        #     地点地图（Leaflet 三源轮换）
+│   │       │   └── ...             #     其他组件（DetailDrawer/BatchEditModal/SettingsModal 等）
+│   │       ├── pages/Library.tsx   #   主页面（状态协调）
+│   │       ├── store/              #   Zustand 三 slice（filter/library/ui）
+│   │       ├── hooks/              #   usePhotoLoader/useRollLoader/useLibraryData
+│   │       └── types/              #   渲染层类型定义
+│   │
+│   └── shared/                     # 跨进程共享
+│       ├── import-types.ts         #   ImportOptions / AutoOrganizeMode
+│       ├── export-types.ts         #   ExportConfig / FilmFormatId / filmFormatToId
+│       └── services/               #   Service 接口契约（IPhotoService 等）
+│
 ├── resources/
-│   ├── film-icons/             # 内置胶卷品牌图标（WebP）
-│   ├── profiles/               # 内置 ICC 色彩配置文件
-│   ├── film-borders/           # 胶片边框素材
-│   └── fonts/                  # 内嵌字体
+│   ├── film-icons/                 # 内置胶卷品牌图标（WebP，234+）
+│   ├── profiles/                   # 内置 ICC 色彩配置文件
+│   ├── film-borders/               # 胶片边框素材
+│   ├── fonts/                      # 内嵌字体
+│   └── presets/                    # 胶卷/相机预设模板（JSON）
+│
 ├── docs/
-│   ├── product-spec.md         # 产品规格文档（数据库设计、IPC API、功能说明）
-│   ├── 导出功能优化方案.md      # 导出功能设计文档
-│   └── requirements.md         # 依赖环境文档
+│   ├── product-spec.md             # 产品规格（数据库设计、IPC API、功能说明）
+│   ├── 架构分层.md                  # 6 层架构说明 + 调用链
+│   ├── 功能测试流程.md              # L1/L2/L3 测试流程
+│   ├── 导出功能优化方案.md           # 导出功能设计文档
+│   └── requirements.md             # 依赖环境文档
+│
 ├── scripts/
-│   └── prepare-win-natives.mjs # 跨平台编译原生模块辅助脚本
+│   ├── prepare-win-natives.mjs     # 跨平台编译原生模块（better-sqlite3/sharp/@napi-rs/canvas）
+│   ├── logic-test.cjs              # L2 逻辑单测（14 项）
+│   ├── regression-test.cjs         # L2 渲染器回归（12 项）
+│   └── test-library-layout.mjs     # L3 library-layout 集成测试
+│
 ├── electron.vite.config.ts
 ├── package.json
 └── tsconfig.json
 ```
+
+### 分层调用链
+
+```
+UI 组件 → service-client → preload(window.api) → ipc-adapters → features Service → data Repository → DB
+                                                                        ↓
+                                                              infra/图像工具 + workers
+```
+
+**依赖规则**：上层单向依赖下层；功能核心不直接 `getDb()`/`ipcMain`；IPC 适配层仅参数转换+转发；UI 经 service-client 调用。
 
 ---
 

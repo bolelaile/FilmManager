@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { Layout, message, Modal, Input, Select } from 'antd'
-import { useFilterStore, useLibraryStore, useUIStore } from '../store'
+import { useFilterStore, useLibraryStore, useUIStore, useShortcutsStore } from '../store'
 import type { SubLibrary } from '../types'
 import { usePhotoLoader } from '../hooks/usePhotoLoader'
 import { useRollLoader } from '../hooks/useRollLoader'
 import { useLibraryData } from '../hooks/useLibraryData'
+import { useShortcutListener } from '../hooks/useShortcutListener'
 import TopBar from '../components/Layout/TopBar'
 import FilterPanel from '../components/FilterPanel'
 import PhotoGrid from '../components/PhotoGrid'
@@ -22,9 +23,15 @@ import ImportProgressBar from '../components/ImportProgressBar'
 import TimelineView from '../components/TimelineView'
 import ExportModal from '../components/ExportModal'
 import ExportProgressBar from '../components/ExportProgressBar'
+import TrashModal from '../components/TrashModal'
+import StatsModal from '../components/StatsModal'
+import DuplicatesModal from '../components/DuplicatesModal'
+import ShortcutsHelp from '../components/ShortcutsHelp'
+
+const SIZES = ['small', 'medium', 'large'] as const
 
 export default function Library() {
-  const { filter, selectedIds, clearSelection, setFilter } = useFilterStore()
+  const { filter, selectedIds, selectAll, clearSelection, setFilter } = useFilterStore()
   const { setIccProfiles, subLibraries, importProgress } = useLibraryStore()
   const {
     setViewerPhoto,
@@ -37,8 +44,23 @@ export default function Library() {
     viewMode,
     setViewMode,
     activeRoll,
-    setActiveRoll
+    setActiveRoll,
+    thumbnailSize,
+    setThumbnailSize,
+    viewerPhoto,
+    openExport,
+    setShortcutsHelpOpen,
+    triggerFocusSearch,
+    copiedAttrs,
+    setCopiedAttrs,
+    trashOpen,
+    setTrashOpen,
+    statsOpen,
+    setStatsOpen,
+    duplicatesOpen,
+    setDuplicatesOpen
   } = useUIStore()
+  const { loadBindings } = useShortcutsStore()
 
   // ── 数据加载 hooks ───────────────────────────────────────────────────────────
   const [unassignedOnly, setUnassignedOnly] = useState(false)
@@ -65,6 +87,7 @@ export default function Library() {
   useEffect(() => {
     loadAttrs()
     loadSubLibs()
+    loadBindings()
     window.api.library.listProfiles().then((p) => setIccProfiles(p as never))
     window.api.app.getInitError().then((err) => {
       if (err) message.error(`初始化错误: ${err}`, 10)
@@ -115,12 +138,15 @@ export default function Library() {
   const globalDragCounter = useRef(0)
 
   const handleGlobalDragEnter = useCallback((e: React.DragEvent) => {
+    // 仅处理外部文件拖入，忽略应用内照片拖拽（自定义 MIME）
+    if (!e.dataTransfer.types.includes('Files')) return
     e.preventDefault()
     globalDragCounter.current++
     setGlobalDragOver(true)
   }, [])
 
   const handleGlobalDragLeave = useCallback((e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes('Files')) return
     e.preventDefault()
     globalDragCounter.current--
     if (globalDragCounter.current <= 0) {
@@ -130,10 +156,12 @@ export default function Library() {
   }, [])
 
   const handleGlobalDragOver = useCallback((e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes('Files')) return
     e.preventDefault()
   }, [])
 
   const handleGlobalDrop = useCallback((e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes('Files')) return
     e.preventDefault()
     globalDragCounter.current = 0
     setGlobalDragOver(false)
@@ -153,6 +181,66 @@ export default function Library() {
     setViewerIndex(index)
     setViewerPhoto(photo)
   }, [photos, setViewerPhotos, setViewerIndex, setViewerPhoto])
+
+  // ── 属性复制/粘贴（作用于当前选中集；单选时取该张） ─────────────────────────
+  const handleCopyAttrs = useCallback(async () => {
+    const ids = [...selectedIds]
+    if (ids.length === 0) return
+    const photo = await window.api.photos.get(ids[0]) as { attributes?: { attribute_type_id: number; value_id: number }[] } | null
+    if (photo?.attributes && photo.attributes.length > 0) {
+      setCopiedAttrs(photo.attributes.map((a) => ({ typeId: a.attribute_type_id, valueId: a.value_id })))
+      message.success(`已复制 ${ids[0]} 号照片的 ${photo.attributes.length} 项属性`)
+    } else {
+      setCopiedAttrs([])
+      message.info('该照片无属性可复制')
+    }
+  }, [selectedIds, setCopiedAttrs])
+
+  const handlePasteAttrs = useCallback(async () => {
+    if (!copiedAttrs || copiedAttrs.length === 0) {
+      message.info('剪贴板无属性')
+      return
+    }
+    const ids = [...selectedIds]
+    if (ids.length === 0) return
+    await window.api.photos.batchSetAttributes(ids, copiedAttrs)
+    message.success(`已粘贴属性到 ${ids.length} 张照片`)
+    loadAttrs()
+    loadPhotos(true)
+  }, [copiedAttrs, selectedIds, loadAttrs, loadPhotos])
+
+  // ── 缩略图尺寸循环 ──────────────────────────────────────────────────────────
+  const cycleThumbSize = useCallback((dir: 1 | -1) => {
+    const idx = SIZES.indexOf(thumbnailSize)
+    const next = SIZES[(idx + dir + SIZES.length) % SIZES.length]
+    setThumbnailSize(next)
+  }, [thumbnailSize, setThumbnailSize])
+
+  // ── 全局快捷键（无全屏预览时激活；网格/预览动作由各自组件监听） ───────────────
+  const globalActive = !viewerPhoto
+  useShortcutListener(
+    ['search.focus', 'view.rolls', 'view.photos', 'view.timeline', 'thumb.smaller', 'thumb.larger',
+     'import.open', 'export.selected', 'selectAll', 'deselectAll', 'attrs.copy', 'attrs.paste',
+     'shortcuts.help', 'trash.open'],
+    {
+      'search.focus': () => triggerFocusSearch(),
+      'view.rolls': () => { setActiveRoll(null); setViewMode('rolls') },
+      'view.photos': () => { if (viewMode !== 'photos') { setActiveRoll(null); setViewMode('photos') } },
+      'view.timeline': () => { setActiveRoll(null); setViewMode('timeline') },
+      'thumb.smaller': () => cycleThumbSize(-1),
+      'thumb.larger': () => cycleThumbSize(1),
+      'import.open': () => setImportOpen(true),
+      'export.selected': () => { if (selectedIds.size > 0) openExport([...selectedIds], `选中 ${selectedIds.size} 张`) },
+      'selectAll': () => { if (viewMode === 'photos') selectAll(photos.map((p) => p.id)) },
+      'deselectAll': () => clearSelection(),
+      'attrs.copy': handleCopyAttrs,
+      'attrs.paste': handlePasteAttrs,
+      'shortcuts.help': () => setShortcutsHelpOpen(true),
+      'trash.open': () => setTrashOpen(true),
+    },
+    globalActive,
+    true
+  )
 
   const handleCreateSubLib = async () => {
     if (!newSubLibName.trim()) return
@@ -456,6 +544,12 @@ export default function Library() {
       />
       <ExportModal />
       <ExportProgressBar />
+
+      {/* 回收站 / 统计 / 重复 / 快捷键帮助 */}
+      <TrashModal open={trashOpen} onClose={() => setTrashOpen(false)} />
+      <StatsModal open={statsOpen} onClose={() => setStatsOpen(false)} />
+      <DuplicatesModal open={duplicatesOpen} onClose={() => setDuplicatesOpen(false)} onChanged={() => { loadPhotos(true); loadAttrs() }} />
+      <ShortcutsHelp />
     </Layout>
   )
 }

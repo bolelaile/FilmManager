@@ -73,14 +73,19 @@ export class RollService {
   delete(id: number, deletePhotos?: boolean, deleteFiles?: boolean): boolean {
     if (deletePhotos) {
       const photoIds = this.repo.photoIdsOfRolls([id])
-      const files = this.photoRepo.collectFilesForDelete(photoIds)
-      this.photoRepo.delete(photoIds)
-      this.repo.delete(id)
       if (deleteFiles) {
+        // 彻底删除：删 DB + 删磁盘文件
+        const files = this.photoRepo.collectFilesForDelete(photoIds)
+        this.photoRepo.delete(photoIds)
+        this.repo.delete(id)
         for (const f of files) {
           try { fs.unlinkSync(f.file_path) } catch {}
           if (f.thumb_path) try { fs.unlinkSync(f.thumb_path) } catch {}
         }
+      } else {
+        // 移入回收站：软删照片，文件保留
+        this.photoRepo.softDelete(photoIds, new Date().toISOString().replace('T', ' ').slice(0, 19))
+        this.repo.delete(id)
       }
     } else {
       this.repo.delete(id)
@@ -92,14 +97,17 @@ export class RollService {
     if (!ids || ids.length === 0) return true
     if (deletePhotos) {
       const photoIds = this.repo.photoIdsOfRolls(ids)
-      const files = this.photoRepo.collectFilesForDelete(photoIds)
-      this.photoRepo.delete(photoIds)
-      this.repo.batchDelete(ids)
       if (deleteFiles) {
+        const files = this.photoRepo.collectFilesForDelete(photoIds)
+        this.photoRepo.delete(photoIds)
+        this.repo.batchDelete(ids)
         for (const f of files) {
           try { fs.unlinkSync(f.file_path) } catch {}
           if (f.thumb_path) try { fs.unlinkSync(f.thumb_path) } catch {}
         }
+      } else {
+        this.photoRepo.softDelete(photoIds, new Date().toISOString().replace('T', ' ').slice(0, 19))
+        this.repo.batchDelete(ids)
       }
     } else {
       this.repo.batchDelete(ids)

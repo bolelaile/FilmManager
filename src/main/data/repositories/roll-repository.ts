@@ -18,7 +18,7 @@ export class RollRepository {
     const { subLibraryId, filters = {}, search, dateFrom, dateTo, dateField = 'imported_at', fileTypes = [], organizationStatuses = [] } = params
     const dateColumn = dateField === 'shot_date' ? 'member.shot_date' : 'member.imported_at'
     let sql = `
-      SELECT r.*, COUNT(DISTINCT pr.photo_id) as photo_count, cover.thumb_path, cover.thumb_ready, MIN(member.shot_date) as shot_date_min
+      SELECT r.*, COUNT(DISTINCT CASE WHEN member.deleted_at IS NULL THEN pr.photo_id END) as photo_count, cover.thumb_path, cover.thumb_ready, MIN(member.shot_date) as shot_date_min
       FROM rolls r
       LEFT JOIN photo_rolls pr ON pr.roll_id = r.id
       LEFT JOIN photos member ON member.id = pr.photo_id
@@ -95,7 +95,7 @@ export class RollRepository {
       sql += ` JOIN photo_attributes ${alias} ON ${alias}.photo_id = p.id AND ${alias}.attribute_type_id = ${tid} AND ${alias}.attribute_value_id IN (${valueIds.map(() => '?').join(',')})`
       args.push(...valueIds)
     }
-    const wheres = ['NOT EXISTS (SELECT 1 FROM photo_rolls other_pr WHERE other_pr.photo_id = p.id)']
+    const wheres = ['NOT EXISTS (SELECT 1 FROM photo_rolls other_pr WHERE other_pr.photo_id = p.id)', 'p.deleted_at IS NULL']
     if (search) { wheres.push('p.original_name LIKE ?'); args.push(`%${search}%`) }
     if (dateFrom) { wheres.push(`${dateColumn} >= ?`); args.push(dateFrom) }
     if (dateTo) { wheres.push(`${dateColumn} <= ?`); args.push(dateField === 'shot_date' ? dateTo : dateTo + ' 23:59:59') }
@@ -120,7 +120,7 @@ export class RollRepository {
     const dateColumn = dateField === 'shot_date' ? 'p.shot_date' : 'p.imported_at'
     let sql = 'SELECT DISTINCT p.* FROM photos p'
     const args: unknown[] = []
-    const wheres: string[] = []
+    const wheres: string[] = ['p.deleted_at IS NULL']
     if (rollId == null) wheres.push('NOT EXISTS (SELECT 1 FROM photo_rolls unassigned_pr WHERE unassigned_pr.photo_id = p.id)')
     else { sql += ' JOIN photo_rolls pr ON pr.photo_id = p.id AND pr.roll_id = ?'; args.push(rollId) }
     let joinIdx = 0

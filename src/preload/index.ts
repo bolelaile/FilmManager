@@ -33,7 +33,12 @@ const api = {
       organizationStatuses?: string[]
       starredOnly?: boolean
       thumbsPerMonth?: number
-    }) => ipcRenderer.invoke('photos:timeline', params)
+    }) => ipcRenderer.invoke('photos:timeline', params),
+    listTrash: (params?: { page?: number; pageSize?: number }) => ipcRenderer.invoke('photos:listTrash', params),
+    restore: (ids: number[]) => ipcRenderer.invoke('photos:restore', ids),
+    purge: (ids: number[]) => ipcRenderer.invoke('photos:purge', ids),
+    emptyTrash: () => ipcRenderer.invoke('photos:emptyTrash'),
+    listDuplicates: () => ipcRenderer.invoke('photos:listDuplicates'),
   },
   // 导入
   import: {
@@ -108,7 +113,9 @@ const api = {
     revealLog: () => ipcRenderer.invoke('app:revealLog'),
     openExternal: (url: string) => ipcRenderer.invoke('app:openExternal', url),
     detectImageApps: () => ipcRenderer.invoke('app:detectImageApps'),
-    openWithApp: (exePath: string, filePaths: string[]) => ipcRenderer.invoke('app:openWithApp', exePath, filePaths)
+    openWithApp: (exePath: string, filePaths: string[]) => ipcRenderer.invoke('app:openWithApp', exePath, filePaths),
+    getShortcuts: () => ipcRenderer.invoke('app:getShortcuts'),
+    setShortcuts: (bindings: Record<string, string>) => ipcRenderer.invoke('app:setShortcuts', bindings),
   },
   // 窗口控制
   win: {
@@ -170,6 +177,10 @@ const api = {
       ipcRenderer.on('export:done', (_, d) => cb(d))
       return () => ipcRenderer.removeAllListeners('export:done')
     }
+  },
+  // 统计
+  stats: {
+    dashboard: () => ipcRenderer.invoke('stats:dashboard')
   }
 }
 

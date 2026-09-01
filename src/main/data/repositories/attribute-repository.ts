@@ -29,7 +29,7 @@ function buildFilteredPhotoSql(params: QueryFilter, excludeTypeId: number): { sq
     sql += ` JOIN photo_attributes ${alias} ON ${alias}.photo_id = p.id AND ${alias}.attribute_type_id = ${tid} AND ${alias}.attribute_value_id IN (${valueIds.map(() => '?').join(',')})`
     args.push(...valueIds)
   }
-  const wheres: string[] = []
+  const wheres: string[] = ['p.deleted_at IS NULL']
   if (subLibraryId != null) {
     wheres.push(`p.sub_library_id IN (
       WITH RECURSIVE descendants(id) AS (
@@ -87,7 +87,9 @@ export class AttributeRepository {
     const hasNonAttr = !!(params?.subLibraryId != null || params?.dateFrom || params?.dateTo || (params?.fileTypes ?? []).length > 0 || (params?.organizationStatuses ?? []).length > 0 || params?.search)
     if (!hasAttr && !hasNonAttr) {
       return this.db.prepare(
-        `SELECT attribute_type_id, attribute_value_id, COUNT(DISTINCT photo_id) as count FROM photo_attributes GROUP BY attribute_type_id, attribute_value_id`
+        `SELECT pa.attribute_type_id, pa.attribute_value_id, COUNT(DISTINCT pa.photo_id) as count
+         FROM photo_attributes pa JOIN photos p ON p.id = pa.photo_id AND p.deleted_at IS NULL
+         GROUP BY pa.attribute_type_id, pa.attribute_value_id`
       ).all() as { attribute_type_id: number; attribute_value_id: number; count: number }[]
     }
     const types = this.db.prepare('SELECT id FROM attribute_types WHERE is_active = 1').all() as { id: number }[]
@@ -100,6 +102,18 @@ export class AttributeRepository {
       result.push(...rows)
     }
     return result
+  }
+
+  /** 按属性类型 key 统计各值照片数（统计仪表盘用，排除回收站） */
+  countsByTypeKey(key: string): { value: string; icon_key?: string | null; count: number }[] {
+    return this.db.prepare(`
+      SELECT av.value, av.icon_key, COUNT(DISTINCT pa.photo_id) as count
+      FROM photo_attributes pa
+      JOIN attribute_types at ON at.id = pa.attribute_type_id AND at.key = ?
+      JOIN attribute_values av ON av.id = pa.attribute_value_id
+      JOIN photos p ON p.id = pa.photo_id AND p.deleted_at IS NULL
+      GROUP BY av.id ORDER BY count DESC
+    `).all(key) as { value: string; icon_key?: string | null; count: number }[]
   }
 
   addType(displayName: string, key: string, sortOrder: number): number {

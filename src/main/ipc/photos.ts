@@ -6,14 +6,14 @@ import { ipcMain } from 'electron'
 import { getDb } from '../db/index'
 import { createRepositories } from '../data'
 import { PhotoService } from '../features/photos'
-import { getThumbDir, getLibraryRoot } from './index'
+import { getThumbDir, getLibraryRoot, getProfilesDir } from './index'
 
 let service: PhotoService | null = null
 function getService(): PhotoService {
   if (!service) {
     const db = getDb()
     const repos = createRepositories(db)
-    service = new PhotoService(db, repos.photos, repos.attributes, getThumbDir(), getLibraryRoot())
+    service = new PhotoService(db, repos.photos, repos.attributes, getThumbDir(), getLibraryRoot(), getProfilesDir())
   }
   return service
 }
@@ -37,4 +37,11 @@ export function registerPhotosIpc(): void {
   ipcMain.handle('photos:batchStar', (_, photoIds: number[], starred: boolean) => getService().batchStar(photoIds, starred))
   ipcMain.handle('photos:exif', (_, photoId: number) => getService().exif(photoId))
   ipcMain.handle('photos:timeline', (_, params) => getService().timeline(params))
+
+  // 回收站
+  ipcMain.handle('photos:listTrash', (_, params) => getService().listTrash(params))
+  ipcMain.handle('photos:restore', (_, ids: number[]) => getService().restore(ids))
+  ipcMain.handle('photos:purge', (_, ids: number[]) => getService().purge(ids))
+  ipcMain.handle('photos:emptyTrash', () => getService().emptyTrash())
+  ipcMain.handle('photos:listDuplicates', () => getService().listDuplicates())
 }

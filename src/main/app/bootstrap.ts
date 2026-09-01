@@ -43,7 +43,7 @@ export function getServices(libraryRoot: string, thumbDir: string, profilesDir: 
   const filesRoot = path.join(libraryRoot, 'files')
 
   services = {
-    photos: new PhotoService(db, repos.photos, repos.attributes, thumbDir, libraryRoot),
+    photos: new PhotoService(db, repos.photos, repos.attributes, thumbDir, libraryRoot, profilesDir),
     import: new ImportService(),
     rolls: new RollService(repos.rolls, repos.attributes, repos.photos),
     attributes: new AttributeService(

@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { Spin, Button, Select, Divider, DatePicker, Input, message, Modal, Tooltip, Popover } from 'antd'
 import { FolderOpenOutlined, PlusOutlined, PictureOutlined, RotateRightOutlined, EnvironmentOutlined, CloseOutlined, AppstoreOutlined, LoadingOutlined, StarFilled, DownloadOutlined } from '@ant-design/icons'
 import { useStore } from '../../store'
+import { useShortcutListener } from '../../hooks/useShortcutListener'
 import type { Photo, IccProfile, AttributeType, AttributeValue, Location } from '../../types'
 import { FilmTag, FilmIconPicker } from '../FilmIcon'
 import LocationPicker from '../LocationPicker'
@@ -225,7 +226,8 @@ export default function PhotoViewer({ attrTypes, onAttrChanged }: PhotoViewerPro
     iccProfiles,
     activeProfile,
     setActiveProfile,
-    openExport
+    openExport,
+    setDetailPhotoId
   } = useStore()
 
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
@@ -298,17 +300,6 @@ export default function PhotoViewer({ attrTypes, onAttrChanged }: PhotoViewerPro
   }, [viewerIndex, viewerPhotos.length, setViewerIndex])
 
   const close = useCallback(() => closeViewer(), [closeViewer])
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!basePhoto) return
-      if (e.key === 'ArrowLeft') handlePrev()
-      if (e.key === 'ArrowRight') handleNext()
-      if (e.key === 'Escape') close()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [basePhoto, handlePrev, handleNext, close])
 
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
@@ -403,6 +394,44 @@ export default function PhotoViewer({ attrTypes, onAttrChanged }: PhotoViewerPro
     await loadPreview(updated, activeProfile)
     onAttrChanged?.()
   }
+
+  const handleStar = async () => {
+    if (!basePhoto) return
+    const newStarred = basePhoto.starred ? 0 : 1
+    await window.api.photos.toggleStar(basePhoto.id)
+    setLivePhoto({ ...(photo ?? basePhoto), starred: newStarred })
+    window.dispatchEvent(new CustomEvent('photo-star-changed', { detail: { id: basePhoto.id, starred: newStarred } }))
+  }
+
+  const handleZoom = (dir: 1 | -1) => {
+    setScale((s) => {
+      const next = Math.min(8, Math.max(0.5, s + dir * 0.3))
+      if (next <= 1) setPan({ x: 0, y: 0 })
+      return next
+    })
+  }
+
+  // 快捷键（可自定义，绑定来自 useShortcutsStore；仅在预览打开时激活）
+  useShortcutListener(
+    ['viewer.prev', 'viewer.next', 'viewer.star', 'viewer.rotate', 'viewer.export',
+     'viewer.toggleInfo', 'viewer.zoomIn', 'viewer.zoomOut', 'viewer.zoomReset',
+     'viewer.first', 'viewer.last', 'viewer.close'],
+    {
+      'viewer.prev': handlePrev,
+      'viewer.next': handleNext,
+      'viewer.star': handleStar,
+      'viewer.rotate': handleRotate,
+      'viewer.export': () => { if (basePhoto) openExport([basePhoto.id], '当前照片') },
+      'viewer.toggleInfo': () => { if (basePhoto) setDetailPhotoId(basePhoto.id) },
+      'viewer.zoomIn': () => handleZoom(1),
+      'viewer.zoomOut': () => handleZoom(-1),
+      'viewer.zoomReset': () => { setScale(1); setPan({ x: 0, y: 0 }) },
+      'viewer.first': () => setViewerIndex(0),
+      'viewer.last': () => setViewerIndex(viewerPhotos.length - 1),
+      'viewer.close': close,
+    },
+    !!basePhoto
+  )
 
   const navBtn = (onClick: () => void, disabled: boolean, label: string) => (
     <button

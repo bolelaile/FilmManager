@@ -1,6 +1,6 @@
 # FilmManager 产品规格文档
 
-**版本：** 1.4.1
+**版本：** 1.4.2
 **技术栈：** Electron 29 · React 18 · TypeScript 5 · Ant Design 5 · Zustand 4 · better-sqlite3 9 · Sharp 0.33 · Leaflet 1.9 · @tanstack/react-virtual 3 · electron-vite 2
 
 ---
@@ -88,6 +88,7 @@ CREATE INDEX idx_photos_content_hash   ON photos(content_hash);
 | `content_hash` | MD5(文件大小字节串 + 文件前 64KB)；导入时去重用；相同哈希视为重复，自动跳过 |
 | `storage_mode` | `managed`（复制到图库 files/）或 `linked`（只记录原始路径）；linked 模式下移动/删除不操作源文件 |
 | `import_status` | `indexing`（两阶段导入占位中）/ `ready`（完整可用）/ `error`（处理失败） |
+| `deleted_at` | 软删除时间戳（`NULL`=正常，非空=在回收站）。所有正常视图/计数均过滤 `deleted_at IS NULL`；`photos:purge` 才真正删除记录与文件 |
 
 **支持的文件格式**
 
@@ -340,6 +341,7 @@ color_profiles.file_path   → {resources/userData}/profiles/{name}.icc
 | 迁移 13 | 创建 `import_queue` 表（`id, source_path, status, photo_id, error_msg, queued_at, done_at`）及 `idx_import_queue_status` / `idx_import_queue_photo_id` 索引 |
 | 迁移 14 | `ALTER TABLE attribute_values ADD COLUMN film_size_type TEXT`；为已有胶卷条目写入分类值、统一 Fuji 名称、新增 Lucky c400、写入富士品牌别名 |
 | 迁移 15 | `ALTER TABLE attribute_values ADD COLUMN camera_formats TEXT`；`ALTER TABLE attribute_values ADD COLUMN camera_default_format TEXT`；新增 `6x9 中画幅`、`135 宽幅 / Xpan` 胶片格式预设值；为所有相机预设条目写入画幅信息（`migrateCameraFormats`），同时新增 Pentax MZ3/MZ5/MZ7/17/645 系列、Contax 645、Mamiya 645 系列、Bronica 系列、Fuji GW/TX 系列、Hasselblad Xpan 系列等相机预设 |
+| 迁移 16 | `ALTER TABLE photos ADD COLUMN deleted_at TEXT`；`CREATE INDEX idx_photos_deleted_at`（回收站软删除） |
 
 ---
 
@@ -366,6 +368,11 @@ color_profiles.file_path   → {resources/userData}/profiles/{name}.icc
 | `photos.moveToSubLibrary(ids, subLibId\|null)` | 批量移动照片及本地文件，返回 `{ moved, unchanged, failed }` |
 | `photos.setRotation(id, rotation)` | 设置旋转角度（0/90/180/270）并重建缩略图 |
 | `photos.batchRotate(ids, delta?)` | 批量顺时针旋转，默认 +90° |
+| `photos.listTrash(params?)` | 回收站分页列表（`deleted_at IS NOT NULL`，含属性） |
+| `photos.restore(ids)` | 从回收站恢复（`deleted_at = NULL`） |
+| `photos.purge(ids)` | 彻底删除（删 DB 记录 + 删磁盘文件，linked 不删源文件，FK 级联清理关联） |
+| `photos.emptyTrash()` | 清空回收站（全部彻底删除），返回 `{ purged }` |
+| `photos.listDuplicates()` | 按 `content_hash` 分组返回重复照片（`{ content_hash, count, photos }[]`） |
 
 **photos:list 排序字段**：`imported_at`（默认降序）/ `shot_date`（`COALESCE(shot_date, imported_at)`）/ `file_name`（`original_name`）。
 
@@ -565,6 +572,8 @@ color_profiles.file_path   → {resources/userData}/profiles/{name}.icc
 | `app.openExternal(url)` | 使用系统浏览器打开 URL（`shell.openExternal`） |
 | `app.detectImageApps()` | 检测已安装图像处理软件（返回 `{ name, exePath }[]`） |
 | `app.openWithApp(exePath, filePaths)` | 以指定路径启动应用并传入文件（`spawn` detached），返回是否成功 |
+| `app.getShortcuts()` | 读取自定义快捷键绑定（存 `db_meta` key=`shortcuts`，JSON `{[id]:binding}`；首次为 null） |
+| `app.setShortcuts(bindings)` | 持久化快捷键绑定到 `db_meta` |
 
 ### 5.9 win（窗口控制）
 
@@ -573,6 +582,12 @@ color_profiles.file_path   → {resources/userData}/profiles/{name}.icc
 | `win.minimize()` | 最小化窗口 |
 | `win.maximize()` | 最大化/还原窗口 |
 | `win.close()` | 关闭窗口 |
+
+### 5.10 stats（统计仪表盘，v1.4.2 新增）
+
+| 方法 | 说明 |
+|---|---|
+| `stats.dashboard()` | 返回 `{ total, librarySize, rollCount, locationCount, byMonth[], byFilm[], byCamera[], byLens[], byLocation[], byRoll[] }`；所有计数均排除回收站。复用 `PhotoRepository.timelineCounts` / `AttributeRepository.countsByTypeKey` / `LocationRepository.list` / `RollRepository.list` |
 
 ---
 
@@ -1037,6 +1052,7 @@ App（ConfigProvider: 深色主题 #141414，primary #c8832a）
 
 | 版本 | 主要变更 |
 |---|---|
+| **1.4.2** | **回收站（软删除 deleted_at，全链路过滤）+ 快捷键体系（38 动作/自定义录制/冲突报错，db_meta 持久化）+ 属性复制粘贴(Ctrl+Shift+C/V) + 拖拽进卷 + 重复照片管理(content_hash 分组) + 统计仪表盘(StatsService + stats:dashboard) + fullPreview 路径安全校验** |
 | 1.0.0 | 初始版本：照片导入、属性标注、子库、全屏预览 |
 | 1.0.1 | 布局优化，installer 更新 |
 | 1.0.2 | 缩略图优化、拖拽导入、直方图、缩放平移、框选、右键菜单 |

@@ -15,6 +15,7 @@ interface PhotoCardProps {
   onDoubleClick: () => void
   onContextMenu: (photo: Photo, x: number, y: number) => void
   onHover?: (photo: Photo) => void
+  onCardDragStart?: (e: React.DragEvent) => void
 }
 
 // ── 小视图：横向列表卡片 ─────────────────────────────────────────────
@@ -26,7 +27,8 @@ function SmallCard({
   onSelect,
   onDoubleClick,
   onContextMenu,
-  onHover
+  onHover,
+  onCardDragStart
 }: PhotoCardProps) {
   const [thumbUrl, setThumbUrl] = useState<string | null>(null)
 
@@ -100,6 +102,8 @@ function SmallCard({
       onDoubleClick={onDoubleClick}
       onMouseEnter={() => onHover?.(photo)}
       onContextMenu={(e) => { e.preventDefault(); onContextMenu(photo, e.clientX, e.clientY) }}
+      draggable={!!onCardDragStart}
+      onDragStart={onCardDragStart}
     >
       {/* 缩略图 */}
       <div style={{
@@ -185,7 +189,8 @@ function TileCard({
   onSelect,
   onDoubleClick,
   onContextMenu,
-  onHover
+  onHover,
+  onCardDragStart
 }: PhotoCardProps) {
   const [thumbUrl, setThumbUrl] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -223,6 +228,8 @@ function TileCard({
         e.preventDefault()
         onContextMenu(photo, e.clientX, e.clientY)
       }}
+      draggable={!!onCardDragStart}
+      onDragStart={onCardDragStart}
     >
       <div style={{
         width: size, height: size,

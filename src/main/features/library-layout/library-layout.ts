@@ -51,8 +51,9 @@ export function synchronizeLibraryLayout(
   }
 
   const result: LayoutSyncResult = { moved: 0, unchanged: 0, failed: [], directories }
+  // 排除回收站照片，避免启动时重定位已软删的照片
   const photos = db
-    .prepare('SELECT id, file_path, original_name, sub_library_id FROM photos ORDER BY id')
+    .prepare('SELECT id, file_path, original_name, sub_library_id FROM photos WHERE deleted_at IS NULL ORDER BY id')
     .all() as PhotoRow[]
 
   for (const photo of photos) {

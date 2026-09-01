@@ -28,7 +28,7 @@ export class SubLibraryRepository {
   /** 各子库照片数（含后代，递归 CTE）+ __total */
   counts(): Record<string, number> {
     const direct = this.db.prepare(
-      'SELECT sub_library_id, COUNT(*) as count FROM photos GROUP BY sub_library_id'
+      'SELECT sub_library_id, COUNT(*) as count FROM photos WHERE deleted_at IS NULL GROUP BY sub_library_id'
     ).all() as { sub_library_id: number | null; count: number }[]
     const map: Record<string, number> = { null: 0, __total: 0 }
     direct.forEach((r) => { map[String(r.sub_library_id)] = r.count; map.__total += r.count })
@@ -40,7 +40,7 @@ export class SubLibraryRepository {
         JOIN sub_libraries child ON child.parent_id = descendants.id
       )
       SELECT descendants.root_id AS sub_library_id, COUNT(photos.id) AS count
-      FROM descendants LEFT JOIN photos ON photos.sub_library_id = descendants.id
+      FROM descendants LEFT JOIN photos ON photos.sub_library_id = descendants.id AND photos.deleted_at IS NULL
       GROUP BY descendants.root_id
     `).all() as { sub_library_id: number; count: number }[]
     nested.forEach((r) => { map[String(r.sub_library_id)] = r.count })

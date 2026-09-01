@@ -152,6 +152,26 @@ interface UISlice {
   // 导出进度浮层
   exportProgress: { done: number; total: number; success: number; failed: number } | null
   setExportProgress: (p: { done: number; total: number; success: number; failed: number } | null) => void
+
+  // 快捷键帮助浮层
+  shortcutsHelpOpen: boolean
+  setShortcutsHelpOpen: (v: boolean) => void
+
+  // 回收站 / 统计 / 重复 弹窗
+  trashOpen: boolean
+  setTrashOpen: (v: boolean) => void
+  statsOpen: boolean
+  setStatsOpen: (v: boolean) => void
+  duplicatesOpen: boolean
+  setDuplicatesOpen: (v: boolean) => void
+
+  // 搜索框聚焦信号（快捷键触发；TopBar 订阅 tick 变化聚焦 input）
+  focusSearchTick: number
+  triggerFocusSearch: () => void
+
+  // 属性复制粘贴剪贴板（{ typeId, valueId }[] | null）
+  copiedAttrs: { typeId: number; valueId: number }[] | null
+  setCopiedAttrs: (a: { typeId: number; valueId: number }[] | null) => void
 }
 
 export const useUIStore = create<UISlice>((set) => ({
@@ -195,6 +215,22 @@ export const useUIStore = create<UISlice>((set) => ({
   closeExport: () => set({ exportOpen: false }),
 
   exportProgress: null,
-  setExportProgress: (p) => set({ exportProgress: p })
+  setExportProgress: (p) => set({ exportProgress: p }),
+
+  shortcutsHelpOpen: false,
+  setShortcutsHelpOpen: (v) => set({ shortcutsHelpOpen: v }),
+
+  trashOpen: false,
+  setTrashOpen: (v) => set({ trashOpen: v }),
+  statsOpen: false,
+  setStatsOpen: (v) => set({ statsOpen: v }),
+  duplicatesOpen: false,
+  setDuplicatesOpen: (v) => set({ duplicatesOpen: v }),
+
+  focusSearchTick: 0,
+  triggerFocusSearch: () => set((s) => ({ focusSearchTick: s.focusSearchTick + 1 })),
+
+  copiedAttrs: null,
+  setCopiedAttrs: (a) => set({ copiedAttrs: a }),
 }))
 

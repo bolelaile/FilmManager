@@ -1,5 +1,6 @@
 import React, { useCallback, useRef, useState } from 'react'
 import { Layout, Button, Input, Segmented, Tooltip, Space, Badge } from 'antd'
+import type { InputRef } from 'antd'
 import {
   ImportOutlined,
   SettingOutlined,
@@ -15,7 +16,10 @@ import {
   BlockOutlined,
   AppstoreOutlined,
   RollbackOutlined,
-  CalendarOutlined
+  CalendarOutlined,
+  BarChartOutlined,
+  CopyOutlined,
+  DeleteOutlined
 } from '@ant-design/icons'
 import { useStore } from '../../store'
 
@@ -37,11 +41,17 @@ export default function TopBar({
   onOpenMap, onOpenFilmLibrary, onOpenCameraLibrary, onOpenLensLibrary,
   onCreateRoll, totalCount
 }: TopBarProps) {
-  const { filter, setFilter, thumbnailSize, setThumbnailSize, rollThumbnailSize, setRollThumbnailSize, selectedIds, setSettingsOpen, viewMode, setViewMode, activeRoll, setActiveRoll } = useStore()
+  const { filter, setFilter, thumbnailSize, setThumbnailSize, rollThumbnailSize, setRollThumbnailSize, selectedIds, setSettingsOpen, viewMode, setViewMode, activeRoll, setActiveRoll, focusSearchTick, triggerFocusSearch, setStatsOpen, setDuplicatesOpen, setTrashOpen } = useStore()
 
   // 搜索框本地受控值（立即响应输入），防抖后再同步到 filter store
   const [searchInput, setSearchInput] = useState(filter.search ?? '')
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const searchRef = useRef<InputRef>(null)
+
+  // 快捷键触发聚焦搜索（订阅 tick 变化）
+  React.useEffect(() => {
+    if (focusSearchTick > 0) searchRef.current?.focus({ cursor: 'all' })
+  }, [focusSearchTick])
 
   // 当外部重置 filter.search（如切换视图、清除筛选）时，同步本地值
   React.useEffect(() => {
@@ -147,13 +157,14 @@ export default function TopBar({
       {/* 操作区 */}
       <Space size={4} style={{ WebkitAppRegion: 'no-drag', padding: '0 6px' }}>
         <Input
+          ref={searchRef}
           prefix={<SearchOutlined style={{ color: '#666' }} />}
-          placeholder="搜索文件名..."
+          placeholder="搜索文件名... (Ctrl+F)"
           value={searchInput}
           onChange={handleSearchChange}
           onClear={handleSearchClear}
           allowClear
-          style={{ width: 190, background: 'var(--bg-elevated)', borderColor: 'var(--border-strong)', color: 'var(--text-primary)' }}
+          style={{ width: 200, background: 'var(--bg-elevated)', borderColor: 'var(--border-strong)', color: 'var(--text-primary)' }}
         />
 
         {/* 视图模式切换：卷 / 单张 / 时间线 */}
@@ -200,6 +211,15 @@ export default function TopBar({
         </Tooltip>
         <Tooltip title="镜头库">
           <Button icon={<AimOutlined />} onClick={onOpenLensLibrary} style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }} />
+        </Tooltip>
+        <Tooltip title="统计仪表盘">
+          <Button icon={<BarChartOutlined />} onClick={() => setStatsOpen(true)} style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }} />
+        </Tooltip>
+        <Tooltip title="查找重复照片">
+          <Button icon={<CopyOutlined />} onClick={() => setDuplicatesOpen(true)} style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }} />
+        </Tooltip>
+        <Tooltip title="回收站">
+          <Button icon={<DeleteOutlined />} onClick={() => setTrashOpen(true)} style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }} />
         </Tooltip>
 
         {/* 分组分隔线 */}

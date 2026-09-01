@@ -21,6 +21,8 @@ import type { Photo, AttributeType } from '../../types'
 import PhotoCard from './PhotoCard'
 import { FilmIconImg } from '../FilmIcon'
 import { useStore } from '../../store'
+import { useUIStore } from '../../store'
+import { useShortcutListener } from '../../hooks/useShortcutListener'
 
 // 窗口/全屏列数规格
 // containerWidth >= WIDE_THRESHOLD → 全屏档，否则窗口档
@@ -63,7 +65,7 @@ export default function PhotoGrid({
 }: PhotoGridProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const { thumbnailSize, selectedIds, toggleSelect, selectAll, clearSelection } = useStore()
-  const { openExport } = useStore()
+  const { openExport, copiedAttrs, setCopiedAttrs } = useStore()
   const [containerWidth, setContainerWidth] = useState(0)
   // 本地 photos 副本，用于响应 photo-star-changed 事件的即时更新
   const [localPhotos, setLocalPhotos] = useState<Photo[]>(photos)
@@ -166,6 +168,65 @@ export default function PhotoGrid({
   useEffect(() => {
     containerRef.current?.scrollTo({ top: 0 })
   }, [thumbnailSize])
+
+  // ── 网格键盘导航焦点 ─────────────────────────────────────────────────────────
+  const [focusedIndex, setFocusedIndex] = useState<number | null>(null)
+  const viewerPhoto = useUIStore((s) => s.viewerPhoto)
+  const gridShortcutsActive = !viewerPhoto
+
+  const focusPhoto = useCallback((idx: number) => {
+    const clamped = Math.max(0, Math.min(localPhotos.length - 1, idx))
+    setFocusedIndex(clamped)
+    const row = Math.floor(clamped / cols)
+    rowVirtualizer.scrollToIndex(row)
+  }, [localPhotos.length, cols, rowVirtualizer])
+
+  const currentTargetIds = useCallback(() => {
+    if (selectedIds.size > 0) return [...selectedIds]
+    if (focusedIndex != null && localPhotos[focusedIndex]) return [localPhotos[focusedIndex].id]
+    return []
+  }, [selectedIds, focusedIndex, localPhotos])
+
+  const handleGridStar = useCallback(async () => {
+    const ids = currentTargetIds()
+    if (ids.length === 0) return
+    if (ids.length === 1) {
+      await window.api.photos.toggleStar(ids[0])
+      const p = localPhotos.find((x) => x.id === ids[0])
+      if (p) window.dispatchEvent(new CustomEvent('photo-star-changed', { detail: { id: ids[0], starred: p.starred ? 0 : 1 } }))
+    } else {
+      await window.api.photos.batchStar(ids, true)
+      onPhotoDeleted() // 批量收藏需刷新列表
+    }
+  }, [currentTargetIds, localPhotos, onPhotoDeleted])
+
+  const handleGridDelete = useCallback(async () => {
+    const ids = currentTargetIds()
+    if (ids.length === 0) return
+    await window.api.photos.delete(ids, false)
+    clearSelection()
+    message.success(`已移入回收站 ${ids.length} 张照片`)
+    onPhotoDeleted()
+  }, [currentTargetIds, clearSelection, onPhotoDeleted])
+
+  useShortcutListener(
+    ['grid.up', 'grid.down', 'grid.left', 'grid.right', 'grid.open', 'grid.toggleSelect',
+     'grid.star', 'grid.rotate', 'grid.delete', 'grid.moveToSubLib'],
+    {
+      'grid.up': () => focusPhoto((focusedIndex ?? 0) - cols),
+      'grid.down': () => focusPhoto((focusedIndex ?? 0) + cols),
+      'grid.left': () => focusPhoto((focusedIndex ?? 0) - 1),
+      'grid.right': () => focusPhoto((focusedIndex ?? 0) + 1),
+      'grid.open': () => { if (focusedIndex != null && localPhotos[focusedIndex]) onOpenViewer(localPhotos[focusedIndex], focusedIndex) },
+      'grid.toggleSelect': () => { if (focusedIndex != null && localPhotos[focusedIndex]) toggleSelect(localPhotos[focusedIndex].id) },
+      'grid.star': handleGridStar,
+      'grid.rotate': () => { if (selectedIds.size > 0) onBatchRotate() },
+      'grid.delete': handleGridDelete,
+      'grid.moveToSubLib': () => { if (selectedIds.size > 0 || focusedIndex != null) onMoveToSubLibrary() },
+    },
+    gridShortcutsActive,
+    true
+  )
 
   // 无限加载触发
   useEffect(() => {
@@ -278,7 +339,7 @@ export default function PhotoGrid({
     const remove = async () => {
       await window.api.photos.delete(targetIds, false)
       clearSelection()
-      message.success(`已从库中移除 ${targetIds.length} 张照片`)
+      message.success(`已移入回收站 ${targetIds.length} 张照片（可在设置 > 回收站恢复）`)
       onPhotoDeleted()
     }
     if (targetIds.length === 1) {
@@ -286,9 +347,9 @@ export default function PhotoGrid({
       return
     }
     Modal.confirm({
-      title: `从库中移除 ${targetIds.length} 张照片？`,
-      content: '只移除 FilmManager 中的索引，本地照片文件会保留。',
-      okText: '移除',
+      title: `移入回收站 ${targetIds.length} 张照片？`,
+      content: '照片将从列表移除，可在「设置 > 回收站」中恢复。',
+      okText: '移入回收站',
       cancelText: '取消',
       onOk: remove
     })
@@ -304,17 +365,17 @@ export default function PhotoGrid({
     }).length
     setContextMenu(null)
     Modal.confirm({
-      title: targetIds.length > 1 ? `永久删除 ${targetIds.length} 张照片的文件？` : '永久删除该照片文件？',
+      title: targetIds.length > 1 ? `彻底删除 ${targetIds.length} 张照片？` : '彻底删除该照片？',
       content: managedCount < targetIds.length
-        ? `其中 ${targetIds.length - managedCount} 张为索引链接模式，仅删除索引；${managedCount} 张的本地文件将被永久删除，无法恢复。`
+        ? `其中 ${targetIds.length - managedCount} 张为索引链接模式，仅删除记录；${managedCount} 张的本地文件将被永久删除，无法恢复。`
         : '本地文件将被永久删除，无法恢复。',
-      okText: '删除',
+      okText: '彻底删除',
       okButtonProps: { danger: true },
       cancelText: '取消',
       onOk: async () => {
-        await window.api.photos.delete(targetIds, true)
+        await window.api.photos.purge(targetIds)
         clearSelection()
-        message.success(`已删除 ${targetIds.length} 张照片`)
+        message.success(`已彻底删除 ${targetIds.length} 张照片`)
         onPhotoDeleted()
       }
     })
@@ -339,6 +400,28 @@ export default function PhotoGrid({
     const ids = contextMenu.targetIds
     setContextMenu(null)
     openExport(ids, ids.length > 1 ? `选中 ${ids.length} 张` : '当前照片')
+  }
+
+  const handleCopyAttrs = () => {
+    if (!contextMenu) return
+    const photo = contextMenu.photo
+    setContextMenu(null)
+    const attrs = (photo.attributes ?? []).map((a) => ({ typeId: a.attribute_type_id, valueId: a.value_id }))
+    setCopiedAttrs(attrs)
+    message.success(attrs.length > 0 ? `已复制 ${attrs.length} 项属性` : '该照片无属性可复制')
+  }
+
+  const handlePasteAttrs = async () => {
+    if (!contextMenu) return
+    const ids = contextMenu.targetIds
+    setContextMenu(null)
+    if (!copiedAttrs || copiedAttrs.length === 0) {
+      message.info('剪贴板无属性')
+      return
+    }
+    await window.api.photos.batchSetAttributes(ids, copiedAttrs)
+    message.success(`已粘贴属性到 ${ids.length} 张照片`)
+    onPhotoDeleted() // 复用刷新回调（会刷新 photos/attrs）
   }
   const handleBatchStar = async (starred: boolean) => {
     if (!contextMenu) return
@@ -449,6 +532,11 @@ export default function PhotoGrid({
                     onDoubleClick={() => onOpenViewer(photo, startIdx + i)}
                     onContextMenu={handleContextMenu}
                     onHover={showPreviewPanel ? handlePhotoHover : undefined}
+                    onCardDragStart={(e) => {
+                      const ids = selectedIds.has(photo.id) ? [...selectedIds] : [photo.id]
+                      e.dataTransfer.setData('application/x-film-photo-ids', JSON.stringify(ids))
+                      e.dataTransfer.effectAllowed = 'move'
+                    }}
                   />
                 ))}
               </div>
@@ -542,6 +630,13 @@ export default function PhotoGrid({
             label={contextTargetCount > 1 ? `批量编辑属性（${contextTargetCount} 张）` : '编辑属性'}
             onClick={handleBatchEdit}
           />
+          <CtxItem icon={<CopyOutlined />} label="复制属性" onClick={handleCopyAttrs} />
+          <CtxItem
+            icon={<CopyOutlined />}
+            label="粘贴属性"
+            onClick={handlePasteAttrs}
+            disabled={!copiedAttrs || copiedAttrs.length === 0}
+          />
           <CtxItem
             icon={<RotateRightOutlined />}
             label={contextTargetCount > 1 ? `批量旋转 90°（${contextTargetCount} 张）` : '顺时针旋转 90°'}
@@ -582,7 +677,7 @@ export default function PhotoGrid({
           <div style={{ borderTop: '1px solid var(--border)', margin: '4px 0' }} />
           <CtxItem
             icon={<DeleteOutlined />}
-            label={contextTargetCount > 1 ? `从库中移除（${contextTargetCount} 张）` : '从库中移除'}
+            label={contextTargetCount > 1 ? `移入回收站（${contextTargetCount} 张）` : '移入回收站'}
             onClick={handleDeleteFromLib}
             danger
           />
@@ -592,7 +687,7 @@ export default function PhotoGrid({
           }) && (
             <CtxItem
               icon={<DeleteOutlined />}
-              label={contextTargetCount > 1 ? `删除文件（${contextTargetCount} 张）` : '删除文件'}
+              label={contextTargetCount > 1 ? `彻底删除（${contextTargetCount} 张）` : '彻底删除'}
               onClick={handleDeleteFile}
               danger
             />
@@ -736,13 +831,15 @@ function CtxItem({
   label,
   onClick,
   danger,
-  suffix
+  suffix,
+  disabled
 }: {
   icon: React.ReactNode
   label: string
   onClick: () => void
   danger?: boolean
   suffix?: React.ReactNode
+  disabled?: boolean
 }) {
   const [hovered, setHovered] = useState(false)
   return (
@@ -750,14 +847,14 @@ function CtxItem({
       style={{
         minHeight: 32, padding: '7px 12px', fontSize: 13,
         display: 'flex', alignItems: 'center', gap: 9,
-        color: danger ? '#ff6b6b' : '#ccc',
-        cursor: 'pointer',
-        background: hovered ? '#2a2a2a' : 'transparent',
+        color: disabled ? '#555' : danger ? '#ff6b6b' : '#ccc',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        background: hovered && !disabled ? '#2a2a2a' : 'transparent',
         transition: 'background 0.1s'
       }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      onClick={onClick}
+      onClick={disabled ? undefined : onClick}
     >
       <span style={{ width: 16, display: 'inline-flex', justifyContent: 'center' }}>{icon}</span>
       <span style={{ flex: 1 }}>{label}</span>

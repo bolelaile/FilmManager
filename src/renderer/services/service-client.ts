@@ -34,6 +34,11 @@ export const photoService = {
   batchStar: (ids: number[], starred: boolean) => api().photos.batchStar(ids, starred),
   exif: (id: number) => api().photos.exif(id),
   timeline: (params?: Parameters<API['photos']['timeline']>[0]) => api().photos.timeline(params),
+  listTrash: (params?: { page?: number; pageSize?: number }) => api().photos.listTrash(params),
+  restore: (ids: number[]) => api().photos.restore(ids),
+  purge: (ids: number[]) => api().photos.purge(ids),
+  emptyTrash: () => api().photos.emptyTrash(),
+  listDuplicates: () => api().photos.listDuplicates(),
 }
 
 /** 导入服务 */
@@ -157,6 +162,13 @@ export const appService = {
   openExternal: (url: string) => api().app.openExternal(url),
   detectImageApps: () => api().app.detectImageApps(),
   openWithApp: (exePath: string, filePaths: string[]) => api().app.openWithApp(exePath, filePaths),
+  getShortcuts: () => api().app.getShortcuts(),
+  setShortcuts: (bindings: Record<string, string>) => api().app.setShortcuts(bindings),
+}
+
+/** 统计服务 */
+export const statsService = {
+  dashboard: () => api().stats.dashboard(),
 }
 
 export const windowService = {

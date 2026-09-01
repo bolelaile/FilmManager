@@ -33,7 +33,7 @@ export function buildPhotoFromClause(p: QueryFilter): { fromClause: string; args
     args.push(...valueIds)
   }
 
-  const wheres: string[] = [`p.import_status = 'ready'`]
+  const wheres: string[] = [`p.import_status = 'ready'`, `(p.deleted_at IS NULL)`]
   if (subLibraryId != null) {
     wheres.push(`p.sub_library_id IN (
       WITH RECURSIVE descendants(id) AS (
@@ -126,7 +126,7 @@ export class PhotoRepository {
     statusCounts: { unclassified: number; missing_date: number; missing_camera: number }
   } {
     const fileTypes = this.db.prepare(
-      "SELECT file_type as value, COUNT(*) as count FROM photos WHERE import_status = 'ready' GROUP BY file_type ORDER BY file_type"
+      "SELECT file_type as value, COUNT(*) as count FROM photos WHERE import_status = 'ready' AND deleted_at IS NULL GROUP BY file_type ORDER BY file_type"
     ).all() as { value: string; count: number }[]
     const s = this.db.prepare(`
       SELECT
@@ -136,7 +136,7 @@ export class PhotoRepository {
           SELECT 1 FROM photo_attributes pa JOIN attribute_types at ON at.id = pa.attribute_type_id
           WHERE pa.photo_id = p.id AND at.key = 'camera'
         ) THEN 1 ELSE 0 END) AS missing_camera
-      FROM photos p WHERE p.import_status = 'ready'
+      FROM photos p WHERE p.import_status = 'ready' AND p.deleted_at IS NULL
     `).get() as { unclassified: number | null; missing_date: number | null; missing_camera: number | null }
     return {
       fileTypes,
@@ -174,16 +174,72 @@ export class PhotoRepository {
     `).all(...args, month) as PhotoRow[]
   }
 
-  /** 全量照片数（库统计用） */
+  /** 全量照片数（库统计用，排除回收站） */
   countAll(): number {
-    return (this.db.prepare('SELECT COUNT(*) as c FROM photos').get() as { c: number }).c
+    return (this.db.prepare('SELECT COUNT(*) as c FROM photos WHERE deleted_at IS NULL').get() as { c: number }).c
   }
 
-  /** 删除照片记录（事务） */
+  /** 软删除（移入回收站）：仅标记 deleted_at，文件不动，可恢复 */
+  softDelete(ids: number[], deletedAt: string): void {
+    if (ids.length === 0) return
+    const stmt = this.db.prepare('UPDATE photos SET deleted_at = ? WHERE id = ?')
+    this.db.transaction(() => { for (const id of ids) stmt.run(deletedAt, id) })()
+  }
+
+  /** 从回收站恢复 */
+  restore(ids: number[]): void {
+    if (ids.length === 0) return
+    const stmt = this.db.prepare('UPDATE photos SET deleted_at = NULL WHERE id = ?')
+    this.db.transaction(() => { for (const id of ids) stmt.run(id) })()
+  }
+
+  /** 回收站列表（分页，含属性） */
+  listTrash(paging: Paging): { total: number; rows: PhotoRow[] } {
+    const page = paging.page ?? 1
+    const pageSize = paging.pageSize ?? 80
+    const offset = (page - 1) * pageSize
+    const total = (this.db.prepare('SELECT COUNT(*) as c FROM photos WHERE deleted_at IS NOT NULL').get() as { c: number }).c
+    const rows = this.db.prepare(
+      'SELECT * FROM photos WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT ? OFFSET ?'
+    ).all(pageSize, offset) as PhotoRow[]
+    return { total, rows }
+  }
+
+  /** 回收站全部 id（清空回收站用） */
+  listTrashIds(): number[] {
+    const rows = this.db.prepare('SELECT id FROM photos WHERE deleted_at IS NOT NULL').all() as { id: number }[]
+    return rows.map((r) => r.id)
+  }
+
+  /** 重复照片分组（content_hash 相同且未在回收站） */
+  duplicateGroups(): { content_hash: string; count: number }[] {
+    return this.db.prepare(`
+      SELECT content_hash, COUNT(*) as count FROM photos
+      WHERE deleted_at IS NULL AND content_hash IS NOT NULL
+      GROUP BY content_hash HAVING COUNT(*) > 1 ORDER BY count DESC
+    `).all() as { content_hash: string; count: number }[]
+  }
+
+  /** 取某 content_hash 的照片（含 file_path/original_name/file_size/imported_at/thumb_path/id/rotation/file_type） */
+  photosByHash(hash: string): PhotoRow[] {
+    return this.db.prepare(
+      'SELECT * FROM photos WHERE content_hash = ? AND deleted_at IS NULL ORDER BY imported_at ASC'
+    ).all(hash) as PhotoRow[]
+  }
+
+  /** 彻底删除照片记录（事务）—— 回收站清空用，依赖 FK ON DELETE CASCADE 清理关联表 */
   delete(ids: number[]): void {
     if (ids.length === 0) return
     const del = this.db.prepare('DELETE FROM photos WHERE id = ?')
     this.db.transaction(() => { for (const id of ids) del.run(id) })()
+  }
+
+  /** 路径是否为已入库照片的 file_path（含 linked 模式下库外路径）。
+   *  用于 fullPreview 路径校验：仅允许预览库内已登记的照片，防止渲染层被攻陷后任意文件读取。
+   *  走 file_path UNIQUE 索引，单次点查。 */
+  pathIsRegistered(filePath: string): boolean {
+    const row = this.db.prepare('SELECT 1 FROM photos WHERE file_path = ? LIMIT 1').get(filePath)
+    return !!row
   }
 
   /** 收集待删文件路径（linked 不删源文件） */

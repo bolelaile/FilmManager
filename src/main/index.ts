@@ -3,6 +3,7 @@ import path from 'path'
 import fs from 'fs'
 import log from 'electron-log'
 import { initDb } from './db/index'
+import { getMeta, setMeta } from './db/index'
 import { initIpc } from './ipc/index'
 import { thumbnailPool } from './workers/worker-pool'
 import { ExternalAppService } from './features/external-apps'
@@ -218,3 +219,15 @@ ipcMain.handle('app:detectImageApps', () => externalAppService.detect(app.getPat
 ipcMain.handle('app:openWithApp', (_, exePath: string, filePaths: string[]) =>
   externalAppService.openWithApp(exePath, filePaths)
 )
+
+// ─── 快捷键绑定持久化（存 db_meta，避免 config.json 覆盖问题） ────────────────
+ipcMain.handle('app:getShortcuts', () => {
+  const raw = getMeta('shortcuts')
+  if (!raw) return null
+  try { return JSON.parse(raw) } catch { return null }
+})
+
+ipcMain.handle('app:setShortcuts', (_, bindings: Record<string, string>) => {
+  setMeta('shortcuts', JSON.stringify(bindings))
+  return true
+})

@@ -41,7 +41,8 @@ export class PhotoService {
     private repo: PhotoRepository,
     private attrs: AttributeRepository,
     private thumbDir: string,
-    private libraryRoot: string
+    private libraryRoot: string,
+    private builtinProfilesDir: string
   ) {}
 
   /** 分页查询（含属性批量加载 + COUNT 缓存） */
@@ -96,9 +97,22 @@ export class PhotoService {
   setShotDate(id: number, shotDate: string | null) { this.repo.setShotDate(id, shotDate); invalidatePhotoCountCache(); return true }
   batchSetShotDate(ids: number[], shotDate: string | null) { this.repo.batchSetShotDate(ids, shotDate); invalidatePhotoCountCache(); return true }
 
-  /** 删除（先收集文件→事务删 DB→删磁盘文件） */
+  /** 删除：默认软删（移入回收站，文件不动可恢复）；deleteFile=true 彻底删除（删 DB + 删磁盘文件） */
   delete(ids: number[], deleteFile: boolean): boolean {
-    const files = deleteFile ? this.repo.collectFilesForDelete(ids) : []
+    if (ids.length === 0) return true
+    if (deleteFile) {
+      return this.purge(ids)
+    }
+    // 软删：仅标记 deleted_at
+    this.repo.softDelete(ids, new Date().toISOString().replace('T', ' ').slice(0, 19))
+    invalidatePhotoCountCache()
+    return true
+  }
+
+  /** 彻底删除（回收站清空）：先收集文件→事务删 DB→删磁盘文件，DB 一致性优先 */
+  purge(ids: number[]): boolean {
+    if (ids.length === 0) return true
+    const files = this.repo.collectFilesForDelete(ids)
     this.repo.delete(ids)
     for (const f of files) {
       try { fs.unlinkSync(f.file_path) } catch {}
@@ -108,8 +122,47 @@ export class PhotoService {
     return true
   }
 
-  /** 全屏预览（单飞 + 丢弃旧排队） */
+  /** 从回收站恢复 */
+  restore(ids: number[]): boolean {
+    this.repo.restore(ids)
+    invalidatePhotoCountCache()
+    return true
+  }
+
+  /** 清空回收站（全部彻底删除） */
+  emptyTrash(): { purged: number } {
+    const ids = this.repo.listTrashIds()
+    this.purge(ids)
+    return { purged: ids.length }
+  }
+
+  /** 回收站列表（含属性） */
+  listTrash(params?: { page?: number; pageSize?: number }): { total: number; rows: (PhotoRow & { attributes: AttrRow[] })[] } {
+    const r = this.repo.listTrash({ page: params?.page ?? 1, pageSize: params?.pageSize ?? 80 })
+    return { total: r.total, rows: this.withAttrs(r.rows) }
+  }
+
+  /** 重复照片分组（每组含照片列表） */
+  listDuplicates(): { content_hash: string; count: number; photos: PhotoRow[] }[] {
+    return this.repo.duplicateGroups().map((g) => ({
+      content_hash: g.content_hash,
+      count: g.count,
+      photos: this.repo.photosByHash(g.content_hash)
+    }))
+  }
+
+  /** 全屏预览（单飞 + 丢弃旧排队）。
+   *  路径校验：filePath 必须为库内已登记照片（含 linked 模式库外路径），
+   *  iccPath 必须位于允许的 ICC 配置目录内，防止渲染层被攻陷后任意文件读取。 */
   async fullPreview(filePath: string, iccPath?: string, rotation = 0): Promise<{ dataUrl: string; width: number; height: number } | null> {
+    if (!filePath || !this.repo.pathIsRegistered(filePath)) {
+      log.warn('fullPreview rejected: file_path is not a registered photo', filePath)
+      return null
+    }
+    if (iccPath && !this.isAllowedIccPath(iccPath)) {
+      log.warn('fullPreview rejected: iccPath outside allowed profile directories', iccPath)
+      return null
+    }
     const oldResolve: ((v: null) => void) | null = pendingPreviewResolve
     if (oldResolve) { pendingPreviewResolve = null; oldResolve(null) }
     if (previewInFlight) {
@@ -134,6 +187,17 @@ export class PhotoService {
       const buf = fs.readFileSync(resolved)
       return `data:image/webp;base64,${buf.toString('base64')}`
     } catch { return null }
+  }
+
+  /** ICC 配置路径是否位于允许目录内（内置 profiles 目录 或 库内 profiles 目录）。
+   *  镜像 library-layout 的 isInsideDirectory 判定：拒绝越界、拒绝 `..`、拒绝绝对路径逃逸。 */
+  private isAllowedIccPath(iccPath: string): boolean {
+    const resolved = path.resolve(iccPath)
+    const roots = [this.builtinProfilesDir, path.join(this.libraryRoot, 'profiles')]
+    return roots.some((root) => {
+      const rel = path.relative(path.resolve(root), resolved)
+      return rel !== '' && !rel.startsWith(`..${path.sep}`) && rel !== '..' && !path.isAbsolute(rel)
+    })
   }
 
   /** 移动到子库（委托 library-layout） */

@@ -14,8 +14,10 @@ export class LocationRepository {
 
   list(): LocationRow[] {
     return this.db.prepare(`
-      SELECT l.*, COUNT(pl.photo_id) as photo_count FROM locations l
-      LEFT JOIN photo_locations pl ON pl.location_id = l.id GROUP BY l.id ORDER BY l.name ASC
+      SELECT l.*, COUNT(p.id) as photo_count FROM locations l
+      LEFT JOIN photo_locations pl ON pl.location_id = l.id
+      LEFT JOIN photos p ON p.id = pl.photo_id AND p.deleted_at IS NULL
+      GROUP BY l.id ORDER BY l.name ASC
     `).all() as LocationRow[]
   }
 
@@ -70,12 +72,14 @@ export class LocationRepository {
   /** 地图视图数据 */
   mapData(): { locations: (LocationRow)[]; photosByLoc: Record<number, number[]> } {
     const locs = this.db.prepare(`
-      SELECT l.id, l.name, l.address, l.lat, l.lng, COUNT(pl.photo_id) as photo_count
-      FROM locations l JOIN photo_locations pl ON pl.location_id = l.id GROUP BY l.id
+      SELECT l.id, l.name, l.address, l.lat, l.lng, COUNT(p.id) as photo_count
+      FROM locations l JOIN photo_locations pl ON pl.location_id = l.id
+      LEFT JOIN photos p ON p.id = pl.photo_id AND p.deleted_at IS NULL
+      GROUP BY l.id HAVING COUNT(p.id) > 0
     `).all() as LocationRow[]
     const photosByLoc: Record<number, number[]> = {}
     for (const loc of locs) {
-      photosByLoc[loc.id] = (this.db.prepare('SELECT photo_id FROM photo_locations WHERE location_id = ?').all(loc.id) as { photo_id: number }[]).map((r) => r.photo_id)
+      photosByLoc[loc.id] = (this.db.prepare('SELECT pl.photo_id FROM photo_locations pl JOIN photos p ON p.id = pl.photo_id AND p.deleted_at IS NULL WHERE pl.location_id = ?').all(loc.id) as { photo_id: number }[]).map((r) => r.photo_id)
     }
     return { locations: locs, photosByLoc }
   }

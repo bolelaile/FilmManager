@@ -161,6 +161,40 @@ export default function RollsView({
     onRollRenamed()
   }
 
+  // ── 拖拽照片进卷（委托到滚动容器，按 closest('.roll-card') 定位卷） ──────────
+  const handleRollDragOver = useCallback((e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes('application/x-film-photo-ids')) return
+    const card = (e.target as HTMLElement).closest('.roll-card') as HTMLElement | null
+    if (card?.dataset.rollId) {
+      e.preventDefault()
+      e.dataTransfer.dropEffect = 'move'
+      card.style.outline = '2px solid var(--accent)'
+    }
+  }, [])
+
+  const handleRollDragLeave = useCallback((e: React.DragEvent) => {
+    const card = (e.target as HTMLElement).closest('.roll-card') as HTMLElement | null
+    if (card) card.style.outline = ''
+  }, [])
+
+  const handleRollDrop = useCallback(async (e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes('application/x-film-photo-ids')) return
+    e.preventDefault()
+    e.stopPropagation()
+    const card = (e.target as HTMLElement).closest('.roll-card') as HTMLElement | null
+    if (card) card.style.outline = ''
+    const rollId = card?.dataset.rollId
+    if (!rollId) return
+    const raw = e.dataTransfer.getData('application/x-film-photo-ids')
+    let ids: number[] = []
+    try { ids = JSON.parse(raw) as number[] } catch { return }
+    if (ids.length === 0) return
+    await window.api.rolls.addPhotos(Number(rollId), ids)
+    message.success(`已添加 ${ids.length} 张照片到卷`)
+    if (onRollLocationChanged) onRollLocationChanged()
+    else onRollDeleted()
+  }, [onRollLocationChanged, onRollDeleted])
+
   // ── 多选辅助 ────────────────────────────────────────────────────────────────
   const toggleSelect = useCallback((id: number) => {
     setSelectedIds((prev) => {
@@ -336,6 +370,9 @@ export default function RollsView({
           isDraggingRef.current = false
           setSelBox(null)
         }}
+        onDragOver={handleRollDragOver}
+        onDragLeave={handleRollDragLeave}
+        onDrop={handleRollDrop}
       >
         <div style={{ padding: '16px 20px' }}>
           {isSmall ? (
@@ -686,6 +723,7 @@ function SmallRollRow({
   return (
     <div
       className="roll-card"
+      data-roll-id={roll.id}
       style={{
         height: SMALL_ROW,
         display: 'flex', alignItems: 'center', gap: 10,
@@ -829,6 +867,7 @@ function RollCard({
   return (
     <div
       className="roll-card"
+      data-roll-id={roll.id}
       style={{
         width: cardWidth,
         background: selected ? '#1e2a12' : '#1e1e1e',
@@ -1002,6 +1041,7 @@ function LargeRollRow({
   return (
     <div
       className="roll-card"
+      data-roll-id={roll.id}
       style={{
         width: rowWidth, height: LARGE_ROW_H,
         display: 'flex', flexDirection: 'row',

@@ -49,6 +49,7 @@ export interface PhotoRow {
   storage_mode: string
   import_status: string
   starred: number
+  deleted_at?: string | null
 }
 
 /** 属性行（含类型与值） */

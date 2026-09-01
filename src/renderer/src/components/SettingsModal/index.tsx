@@ -12,8 +12,24 @@ import type { AttributeType, AttributeValue, IccProfile } from '../../types'
 import { useStore } from '../../store'
 import { THEMES } from '../../store/uiSlice'
 import { FilmIconImg } from '../FilmIcon'
+import ShortcutsSettings from './ShortcutsSettings'
 
 const CHANGELOG: { version: string; summary: string; items: string[] }[] = [
+  {
+    version: '1.4.2',
+    summary: '回收站 + 快捷键体系 + 属性复制粘贴/拖拽进卷 + 重复管理 + 统计仪表盘',
+    items: [
+      '回收站（软删除）：删除改为移入回收站（deleted_at 标记，文件不动可恢复），原三档简化为「移入回收站 / 彻底删除」；新增回收站弹窗（恢复/彻底删除/清空）；全链路查询过滤回收站（list/timeline/filterOptions/valueCounts/子库计数/卷计数/地点计数/库布局同步）',
+      '快捷键体系：38 个动作（全局/网格/预览三类）+ 设置页自定义录制 + 冲突报错拒绝；绑定持久化于 db_meta；新增快捷键帮助浮层（?）；网格方向键导航焦点、预览 F/R/E/I/+/-/0/Home/End',
+      '修复符号快捷键匹配：?/+ 等 Shift 组合符号不再误判为 Shift+? 导致与默认绑定不匹配',
+      '修复弹窗后误操作：任一 antd Modal 打开时全局/网格快捷键自动停用',
+      '属性复制粘贴：右键「复制属性/粘贴属性」+ Ctrl+Shift+C/V，复用 batchSetAttributes',
+      '拖拽进卷：照片卡片可拖拽（自定义 MIME），卷卡片为放置目标，调 rolls.addPhotos；全局拖入守卫隔离应用内拖拽',
+      '重复照片管理：按 content_hash 分组展示，「保留最新/最旧/最大，其余移入回收站」+ 单张软删',
+      '统计仪表盘：新增 StatsService + stats:dashboard IPC；总数/库容量/卷数/地点数 + 按月/胶片/相机/镜头/地点/卷 Top20（纯 CSS 柱状图，无新依赖）',
+      '安全加固：photos:fullPreview 路径校验（仅库内已登记照片 + ICC 路径限定配置目录）',
+    ],
+  },
   {
     version: '1.4.1',
     summary: '完整移植参考项目边框渲染核心 + 画幅补全 + 漏洞修复',
@@ -907,6 +923,11 @@ export default function SettingsModal({ open, onClose, onAttrChange }: SettingsM
                 )}
               </div>
             )
+          },
+          {
+            key: 'shortcuts',
+            label: '快捷键',
+            children: <ShortcutsSettings />
           }
         ]}
       />

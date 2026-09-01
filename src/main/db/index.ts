@@ -32,12 +32,12 @@ export function initDb(libraryRoot: string): void {
  */
 const SEED_VERSION = '1.4.1'
 
-function getMeta(key: string): string | null {
+export function getMeta(key: string): string | null {
   const row = db.prepare('SELECT value FROM db_meta WHERE key = ?').get(key) as { value: string } | undefined
   return row?.value ?? null
 }
 
-function setMeta(key: string, value: string): void {
+export function setMeta(key: string, value: string): void {
   db.prepare('INSERT INTO db_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value)
 }
 
@@ -238,6 +238,10 @@ function runMigrations(): void {
   // 迁移：starred 收藏列
   try { db.exec(`ALTER TABLE photos ADD COLUMN starred INTEGER NOT NULL DEFAULT 0`) } catch {}
   try { db.exec(`CREATE INDEX IF NOT EXISTS idx_photos_starred ON photos(starred)`) } catch {}
+
+  // 迁移：软删除（回收站）—— deleted_at IS NULL 表示正常，NOT NULL 表示在回收站
+  try { db.exec(`ALTER TABLE photos ADD COLUMN deleted_at TEXT`) } catch {}
+  try { db.exec(`CREATE INDEX IF NOT EXISTS idx_photos_deleted_at ON photos(deleted_at)`) } catch {}
 
   seedDefaultData()
   // 昂贵的数据迁移按种子版本门控：版本匹配则整段跳过，避免每次启动重复执行
